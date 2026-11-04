@@ -1,31 +1,51 @@
 import { NOTIFY_HOUR } from './notifier.js';
-import { summarizeDay } from './summary.js';
+import { COLD_C, dayOutlook, HOT_C, VERY_COLD_C } from './outlook.js';
 import { getDay, isCoveredLocation } from './weather.js';
 
 const SHARE_LABEL = '📍 Share my location';
 const UPDATE_LABEL = '📍 Update location';
+const HELP_LABEL = 'ℹ️ Help';
 const FORECAST_ERROR = "Sorry, I couldn't get the forecast just now. Please try again in a minute.";
 const NOT_COVERED = 'Sorry, I only cover Japan, Malaysia and India for now, and that location looks like it is somewhere else.';
-const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters.
-☔-🧣-🚫-🧣 means morning - afternoon - evening - night.
-☔ umbrella, 🧣 cold, 🧥 very cold, ☀️ hot and sunny, 🚫 nothing needed.`;
+const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters. Tap ${HELP_LABEL} to see what the icons mean.`;
+
+const HELP_TEXT = `*What the icons mean*
+☔ Take an umbrella
+🌦️ A little rain, umbrella optional
+🧥 Cold, ${COLD_C}°C or below
+❄️ Very cold, below ${VERY_COLD_C}°C
+☀️ Hot and sunny, ${HOT_C}°C or above
+🚫 Nothing needed
+
+*Timings*
+Icons go in this order, for example ☔-🌦️-🚫-🧥:
+1. Morning, 06:00–12:00
+2. Afternoon, 12:00–18:00
+3. Evening, 18:00–24:00
+4. Night, 00:00–06:00
+
+*Notifications*
+Around ${NOTIFY_HOUR}:00 your local time, I check tomorrow. I only message you if you need an umbrella, if the temperature is changing by 4°C or more compared with the past week, or if you need different clothes than in the past week.
+
+*More details*
+Contact Shrawan.`;
 
 const locationButton = (text) => ({ text, request_location: true });
+const HELP_ROW = [{ text: HELP_LABEL }];
 
 const ASK_LOCATION_KEYBOARD = {
-  keyboard: [[locationButton(SHARE_LABEL)]],
+  keyboard: [[locationButton(SHARE_LABEL)], HELP_ROW],
   resize_keyboard: true,
 };
 
 export const MAIN_KEYBOARD = {
-  keyboard: [[{ text: 'Today' }, { text: 'Tomorrow' }], [locationButton(UPDATE_LABEL)]],
+  keyboard: [[{ text: 'Today' }, { text: 'Tomorrow' }], [locationButton(UPDATE_LABEL)], HELP_ROW],
   resize_keyboard: true,
 };
 
-const DAYS = {
-  today: { offset: 0, label: 'Today' },
-  tomorrow: { offset: 1, label: 'Tomorrow' },
-};
+const DAY_OFFSETS = { today: 0, tomorrow: 1 };
+
+const iconsFor = (forecast, dayOffset) => dayOutlook(getDay(forecast, dayOffset)).icons;
 
 export function createBot({ messenger, store, fetchForecast, log = console }) {
   const askForLocation = (userId, intro) =>
@@ -38,7 +58,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     try {
       const forecast = await fetchForecast(lat, lon);
       if (isCoveredLocation(forecast)) {
-        text = `${summarizeDay(getDay(forecast, DAYS.today.offset), DAYS.today.label)}\n\n${NOTIFICATION_INTRO}`;
+        text = `📍 Location saved. Here's today:\n\n${iconsFor(forecast, DAY_OFFSETS.today)}\n\n${NOTIFICATION_INTRO}`;
         store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
       } else {
         text = NOT_COVERED;
@@ -50,12 +70,11 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     await messenger.sendText(userId, text, keyboardFor(userId));
   }
 
-  async function sendDay(userId, { offset, label }) {
+  async function sendDay(userId, dayOffset) {
     const location = store.getLocation(userId);
     let text;
     try {
-      const forecast = await fetchForecast(location.lat, location.lon);
-      text = summarizeDay(getDay(forecast, offset), label);
+      text = iconsFor(await fetchForecast(location.lat, location.lon), dayOffset);
     } catch (err) {
       log.error('Forecast failed:', err.message);
       text = FORECAST_ERROR;
@@ -70,6 +89,12 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     }
 
     const rawText = (message.text ?? '').trim();
+    const text = rawText.toLowerCase();
+
+    if (rawText === HELP_LABEL || text === 'help' || text === '/help') {
+      await messenger.sendText(userId, HELP_TEXT, keyboardFor(userId));
+      return;
+    }
 
     // Some Telegram apps, such as Desktop, can't share a location from the button.
     if (rawText === SHARE_LABEL || rawText === UPDATE_LABEL) {
@@ -90,9 +115,8 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       return;
     }
 
-    const text = rawText.toLowerCase();
-    if (Object.hasOwn(DAYS, text)) {
-      await sendDay(userId, DAYS[text]);
+    if (Object.hasOwn(DAY_OFFSETS, text)) {
+      await sendDay(userId, DAY_OFFSETS[text]);
       return;
     }
 

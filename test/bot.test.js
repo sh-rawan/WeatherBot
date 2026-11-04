@@ -10,17 +10,23 @@ const CHAT_ID = 111;
 const USER = String(CHAT_ID);
 const TOKYO = { latitude: 35.68, longitude: 139.76 };
 const SAVED_TOKYO = { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' };
+const TODAY_ICONS = '🚫-🚫-🚫-🚫';
+const TOMORROW_ICONS = '☔-🚫-🚫-🚫';
+const HELP = 'ℹ️ Help';
 
+// Today is dry, and tomorrow morning needs an umbrella.
 const forecast = (timezone = 'Asia/Tokyo') => {
   const size = 72;
+  const precipitation = Array(size).fill(0);
+  precipitation[24 + 9] = 3;
   return {
     timezone,
     hourly: {
       time: Array.from({ length: size }, (_, i) => `2026-11-0${4 + Math.floor(i / 24)}T00:00`),
-      temperature_2m: Array(size).fill(12),
-      precipitation: Array(size).fill(0),
+      temperature_2m: Array(size).fill(20),
+      precipitation,
       precipitation_probability: Array(size).fill(0),
-      weather_code: Array(size).fill(1),
+      weather_code: Array(size).fill(3),
       wind_gusts_10m: Array(size).fill(5),
     },
   };
@@ -39,6 +45,7 @@ function setup({ fetchForecast = async () => forecast(), store = createStore() }
 }
 
 const firstButton = (keyboard) => keyboard.keyboard[0][0];
+const lastRow = (keyboard) => keyboard.keyboard.at(-1).map((button) => button.text);
 
 test('/start asks for a location with a location button', async () => {
   const { sent, say } = setup();
@@ -72,14 +79,15 @@ test('sharing a location saves it and replies with today, using those coordinate
   await share();
   assert.deepEqual(store.getLocation(USER), SAVED_TOKYO);
   assert.deepEqual(calls, [[35.68, 139.76]]);
-  assert.match(sent[0].text, /Today, Wed 4 Nov/);
+  assert.ok(sent[0].text.includes(TODAY_ICONS));
   assert.equal(firstButton(sent[0].keyboard).text, 'Today');
 });
 
-test('sharing a location explains the notifications and icons', async () => {
+test('sharing a location explains the notifications and points to Help', async () => {
   const { sent, share } = setup();
   await share();
-  assert.match(sent[0].text, /morning - afternoon - evening - night/);
+  assert.match(sent[0].text, /Every evening around 20:00/);
+  assert.ok(sent[0].text.includes(HELP));
 });
 
 for (const timezone of ['Asia/Tokyo', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia/Kolkata', 'Asia/Calcutta']) {
@@ -87,7 +95,7 @@ for (const timezone of ['Asia/Tokyo', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia
     const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
     await share();
     assert.equal(store.getLocation(USER).timezone, timezone);
-    assert.match(sent[0].text, /Today, Wed 4 Nov/);
+    assert.match(sent[0].text, /Location saved/);
   });
 }
 
@@ -123,13 +131,77 @@ test('a location is not saved when the forecast check fails', async () => {
   assert.match(sent[0].text, /couldn't get the forecast/);
 });
 
-test('the Today and Tomorrow buttons work, regardless of case', async () => {
+test('Today and Tomorrow reply with only the icons for that day', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('Today');
+  await say('Tomorrow');
+  assert.equal(sent[1].text, TODAY_ICONS);
+  assert.equal(sent[2].text, TOMORROW_ICONS);
+});
+
+test('Today and Tomorrow work when typed, regardless of case', async () => {
+  const { sent, say, share } = setup();
+  await share();
   await say(' tomorrow ');
-  assert.match(sent[1].text, /Today, Wed 4 Nov/);
-  assert.match(sent[2].text, /Tomorrow, Thu 5 Nov/);
+  await say('TODAY');
+  assert.equal(sent[1].text, TOMORROW_ICONS);
+  assert.equal(sent[2].text, TODAY_ICONS);
+});
+
+test('Today and Tomorrow explain when the forecast fails', async () => {
+  let fail = false;
+  const { sent, say, share } = setup({
+    fetchForecast: async () => {
+      if (fail) throw new Error('down');
+      return forecast();
+    },
+  });
+  await share();
+  fail = true;
+  await say('Today');
+  assert.match(sent[1].text, /couldn't get the forecast/);
+});
+
+test('the Help button is the bottom row of both keyboards', async () => {
+  const { sent, say, share } = setup();
+  await say('/start');
+  assert.deepEqual(lastRow(sent[0].keyboard), [HELP]);
+  await share();
+  assert.deepEqual(lastRow(sent[1].keyboard), [HELP]);
+});
+
+test('Help explains the icons, timings, notifications and who to contact', async () => {
+  const { sent, say } = setup();
+  await say(HELP);
+  const { text } = sent[0];
+  for (const icon of ['☔', '🌦️', '🧥', '❄️', '☀️', '🚫']) assert.ok(text.includes(icon), `missing ${icon}`);
+  for (const timing of ['06:00–12:00', '12:00–18:00', '18:00–24:00', '00:00–06:00']) {
+    assert.ok(text.includes(timing), `missing ${timing}`);
+  }
+  assert.match(text, /15°C or below/);
+  assert.match(text, /below 5°C/);
+  assert.match(text, /30°C or above/);
+  assert.match(text, /20:00 your local time/);
+  assert.match(text, /Contact Shrawan/);
+});
+
+test('Help works before a location is shared, and keeps the right keyboard', async () => {
+  const { sent, say, share } = setup();
+  await say('help');
+  assert.match(sent[0].text, /What the icons mean/);
+  assert.equal(firstButton(sent[0].keyboard).request_location, true);
+  await share();
+  await say('/help');
+  assert.match(sent[2].text, /What the icons mean/);
+  assert.equal(firstButton(sent[2].keyboard).text, 'Today');
+});
+
+test('Help text has balanced bold markers, so Telegram can format it', async () => {
+  const { sent, say } = setup();
+  await say(HELP);
+  assert.equal(sent[0].text.split('*').length % 2, 1);
+  assert.doesNotMatch(sent[0].text, /[_`[]/);
 });
 
 test('inherited object keys are not treated as commands', async () => {
@@ -181,7 +253,7 @@ test('a saved user is still recognised after a restart, despite numeric chat IDs
     await setup({ store: createStore(path) }).share();
     const { sent, say } = setup({ store: createStore(path) });
     await say('today');
-    assert.match(sent[0].text, /Today, Wed 4 Nov/);
+    assert.equal(sent[0].text, TODAY_ICONS);
   } finally {
     rmSync(dir, { recursive: true });
   }

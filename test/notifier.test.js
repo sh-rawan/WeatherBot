@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { createNotifier, shouldSend } from '../src/notifier.js';
+import { createNotifier, shouldSend, temperatureChangeStarts } from '../src/notifier.js';
 import { createStore } from '../src/store.js';
 
 const KEYBOARD = { Buttons: [] };
@@ -12,10 +12,17 @@ const TODAY_START = PAST_DAYS * 24;
 const TOMORROW_START = TODAY_START + 24;
 
 // `recentTempC` covers the past week and today. `tempC` covers tomorrow onwards.
-const forecast = ({ rainy = true, tempC = 15, recentTempC = 15 } = {}) => {
+const forecast = ({ rainy = true, lightRain = false, tempC = 20, recentTempC = 20 } = {}) => {
   const size = (PAST_DAYS + 3) * 24;
   const probability = Array(size).fill(0);
-  if (rainy) probability[TOMORROW_START + 9] = 80; // Timestamp 09:00 means rain from 08:00 to 09:00.
+  const precipitation = Array(size).fill(0);
+  const rainIndex = TOMORROW_START + 9; // Timestamp 09:00 means rain from 08:00 to 09:00.
+  if (lightRain) {
+    probability[rainIndex] = 55;
+  } else if (rainy) {
+    probability[rainIndex] = 80;
+    precipitation[rainIndex] = 3;
+  }
   return {
     timezone: 'Asia/Tokyo',
     pastDays: PAST_DAYS,
@@ -24,7 +31,7 @@ const forecast = ({ rainy = true, tempC = 15, recentTempC = 15 } = {}) => {
         new Date(Date.UTC(2026, 9, 28, i)).toISOString().slice(0, 16),
       ),
       temperature_2m: Array.from({ length: size }, (_, i) => (i < TOMORROW_START ? recentTempC : tempC)),
-      precipitation: Array(size).fill(0),
+      precipitation,
       precipitation_probability: probability,
       weather_code: Array(size).fill(3),
       wind_gusts_10m: Array(size).fill(5),
@@ -48,10 +55,24 @@ function setup({ time = '2026-11-04T20:00:00+09:00', fetchForecast = async () =>
   return { notifier, sent, store, state };
 }
 
-const outlookWith = (...weather) => ({ rain: false, weather });
+const outlookWith = (...weather) => ({ umbrella: false, weather });
 
-test('rain always sends, even when the cold is already normal', () => {
-  assert.equal(shouldSend({ rain: true, weather: ['cold'] }, [outlookWith('cold')]), true);
+test('needing an umbrella always sends, even when the cold is already normal', () => {
+  assert.equal(shouldSend({ umbrella: true, weather: ['cold'] }, [outlookWith('cold')]), true);
+});
+
+test('light rain alone sends nothing', async () => {
+  const { notifier, sent } = setup({ fetchForecast: async () => forecast({ lightRain: true }) });
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
+});
+
+test('light rain still shows its icon when something else sends a message', async () => {
+  const { notifier, sent } = setup({
+    fetchForecast: async () => forecast({ lightRain: true, tempC: 5 }),
+  });
+  await notifier.checkAll();
+  assert.equal(sent[0].text, '🌦️🧥-🧥-🧥-🧥');
 });
 
 test('cold or hot that did not happen recently sends', () => {
@@ -74,6 +95,69 @@ test('warming from very cold to cold needs no new clothes, so stays quiet', () =
 
 test('a day with nothing to report never sends', () => {
   assert.equal(shouldSend(outlookWith(), []), false);
+});
+
+test('a temperature change sends even when the clothes are already normal', () => {
+  assert.equal(shouldSend(outlookWith('cold'), [outlookWith('cold')], true), true);
+});
+
+// Daily averages: 7 days before today, then today, then tomorrow.
+const week = (tempC) => Array(7).fill(tempC);
+
+test('a change of 4°C from the past week counts, in either direction', () => {
+  assert.equal(temperatureChangeStarts([...week(12), 12, 8]), true);
+  assert.equal(temperatureChangeStarts([...week(12), 12, 16]), true);
+});
+
+test('a change of under 4°C does not count', () => {
+  assert.equal(temperatureChangeStarts([...week(12), 12, 8.1]), false);
+  assert.equal(temperatureChangeStarts([...week(12), 12, 15.9]), false);
+  assert.equal(temperatureChangeStarts([...week(12), 12, 12]), false);
+});
+
+test('a change that began today does not send again tomorrow', () => {
+  assert.equal(temperatureChangeStarts([...week(20), 15, 15]), false);
+});
+
+test('a change that reverses direction counts as a new change', () => {
+  assert.equal(temperatureChangeStarts([...week(20), 15, 25]), true);
+});
+
+test('the average compares against the week, not just today', () => {
+  // One odd warm day followed by a return to normal is not a change.
+  assert.equal(temperatureChangeStarts([...week(12), 20, 12]), false);
+});
+
+test('a real forecast with a 4°C drop sends, even with the same icons all week', async () => {
+  const { notifier, sent } = setup({
+    fetchForecast: async () => forecast({ rainy: false, recentTempC: 12, tempC: 8 }),
+  });
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.text), ['🧥-🧥-🧥-🧥']);
+});
+
+test('a real forecast with a smaller drop and the same icons stays quiet', async () => {
+  const { notifier, sent } = setup({
+    fetchForecast: async () => forecast({ rainy: false, recentTempC: 12, tempC: 9 }),
+  });
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
+});
+
+test('a real forecast with a 4°C rise sends', async () => {
+  const { notifier, sent } = setup({
+    fetchForecast: async () => forecast({ rainy: false, recentTempC: 16, tempC: 20 }),
+  });
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.text), ['🚫-🚫-🚫-🚫']);
+});
+
+test('a real forecast does not repeat a change that began today', async () => {
+  const data = forecast({ rainy: false, recentTempC: 20, tempC: 15 });
+  for (let i = TODAY_START; i < TOMORROW_START; i++) data.hourly.temperature_2m[i] = 15;
+  const { notifier, sent } = setup({ fetchForecast: async () => data });
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
 });
 
 test('nothing is checked before 20:00 Japan time', async () => {
@@ -173,7 +257,7 @@ test('the first cold day after a mild week sends a message', async () => {
   const { notifier, sent } = setup({ fetchForecast: async () => forecast({ rainy: false, tempC: 5 }) });
   await notifier.checkAll();
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].text, '🧣-🧣-🧣-🧣');
+  assert.equal(sent[0].text, '🧥-🧥-🧥-🧥');
 });
 
 test('another cold day in a cold week sends nothing', async () => {
@@ -186,7 +270,8 @@ test('another cold day in a cold week sends nothing', async () => {
 
 test('cold from exactly a week ago still counts, but eight days ago does not', async () => {
   const withColdDay = (daysAgo) => {
-    const data = forecast({ rainy: false, tempC: 5 });
+    // A 1°C difference, so only the clothes rule can send a message here.
+    const data = forecast({ rainy: false, tempC: 15, recentTempC: 16 });
     const start = TODAY_START - daysAgo * 24;
     for (let i = start + 6; i < start + 12; i++) data.hourly.temperature_2m[i] = 5;
     return data;
