@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { createBot } from '../src/bot.js';
-import { createStore } from '../src/store.js';
+import { createMemoryStore } from '../src/store.js';
 
 const CHAT_ID = 111;
 const USER = String(CHAT_ID);
@@ -34,7 +31,7 @@ const forecast = (timezone = 'Asia/Tokyo') => {
 
 const privateChat = { id: CHAT_ID, type: 'private' };
 
-function setup({ fetchForecast = async () => forecast(), store = createStore() } = {}) {
+function setup({ fetchForecast = async () => forecast(), store = createMemoryStore() } = {}) {
   const sent = [];
   const messenger = { sendText: async (to, text, keyboard) => sent.push({ to, text, keyboard }) };
   const bot = createBot({ messenger, store, fetchForecast, log: { error() {} } });
@@ -77,7 +74,7 @@ test('sharing a location saves it and replies with today, using those coordinate
     },
   });
   await share();
-  assert.deepEqual(store.getLocation(USER), SAVED_TOKYO);
+  assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   assert.deepEqual(calls, [[35.68, 139.76]]);
   assert.ok(sent[0].text.includes(TODAY_ICONS));
   assert.equal(firstButton(sent[0].keyboard).text, 'Today');
@@ -94,7 +91,7 @@ for (const timezone of ['Asia/Tokyo', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia
   test(`a location in ${timezone} is accepted and saved with its timezone`, async () => {
     const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
     await share();
-    assert.equal(store.getLocation(USER).timezone, timezone);
+    assert.equal((await store.getLocation(USER)).timezone, timezone);
     assert.match(sent[0].text, /Location saved/);
   });
 }
@@ -103,7 +100,7 @@ for (const timezone of ['Asia/Seoul', 'Asia/Singapore', 'Asia/Brunei', 'Asia/Col
   test(`a location in ${timezone} is declined and not saved`, async () => {
     const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
     await share();
-    assert.equal(store.getLocation(USER), undefined);
+    assert.equal(await store.getLocation(USER), undefined);
     assert.match(sent[0].text, /only cover Japan, Malaysia and India/);
     assert.equal(firstButton(sent[0].keyboard).request_location, true);
   });
@@ -115,7 +112,7 @@ test('a location outside the covered countries keeps the previously saved one', 
   await share();
   timezone = 'Asia/Taipei';
   await share({ latitude: 25.03, longitude: 121.57 });
-  assert.deepEqual(store.getLocation(USER), SAVED_TOKYO);
+  assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   assert.match(sent[1].text, /only cover Japan, Malaysia and India/);
   assert.equal(firstButton(sent[1].keyboard).text, 'Today');
 });
@@ -127,7 +124,7 @@ test('a location is not saved when the forecast check fails', async () => {
     },
   });
   await share();
-  assert.equal(store.getLocation(USER), undefined);
+  assert.equal(await store.getLocation(USER), undefined);
   assert.match(sent[0].text, /couldn't get the forecast/);
 });
 
@@ -233,7 +230,7 @@ test('group chats are ignored', async () => {
   const { bot, sent, store } = setup();
   await bot.handleUpdate({ message: { chat: { id: -5, type: 'group' }, location: TOKYO } });
   assert.equal(sent.length, 0);
-  assert.equal(store.getLocation('-5'), undefined);
+  assert.equal(await store.getLocation('-5'), undefined);
 });
 
 test('blocking the bot deletes the saved location, unblocking does not', async () => {
@@ -241,22 +238,19 @@ test('blocking the bot deletes the saved location, unblocking does not', async (
   await share();
   const member = (status) => ({ my_chat_member: { chat: privateChat, new_chat_member: { status } } });
   await bot.handleUpdate(member('member'));
-  assert.deepEqual(store.getLocation(USER), SAVED_TOKYO);
+  assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   await bot.handleUpdate(member('kicked'));
-  assert.equal(store.getLocation(USER), undefined);
+  assert.equal(await store.getLocation(USER), undefined);
 });
 
-test('a saved user is still recognised after a restart, despite numeric chat IDs', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'weatherbot-'));
-  try {
-    const path = join(dir, 'users.json');
-    await setup({ store: createStore(path) }).share();
-    const { sent, say } = setup({ store: createStore(path) });
-    await say('today');
-    assert.equal(sent[0].text, TODAY_ICONS);
-  } finally {
-    rmSync(dir, { recursive: true });
-  }
+test('users are saved under a text ID, though Telegram sends a number', async () => {
+  const store = createMemoryStore();
+  await setup({ store }).share();
+  assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
+  assert.equal(await store.getLocation(CHAT_ID), undefined);
+  const { sent, say } = setup({ store });
+  await say('today');
+  assert.equal(sent[0].text, TODAY_ICONS);
 });
 
 test('unknown update types are ignored', async () => {

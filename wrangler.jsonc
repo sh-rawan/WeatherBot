@@ -1,0 +1,14 @@
+{
+  "name": "weatherbot",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "weatherbot",
+      "database_id": "a4cd9a49-4821-4786-aef9-20212b455ff5"
+    }
+  ]
+}

@@ -2,22 +2,38 @@ import { dayOutlook, wakingAverageC } from './outlook.js';
 import { getDay } from './weather.js';
 
 export const NOTIFY_HOUR = 20;
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const NORMAL_WEATHER_DAYS = 7;
 const TEMPERATURE_CHANGE_C = 4;
+
+// Each user takes up to 3 outgoing requests: forecast, message and saving the date.
+// With the 1 request that loads users, 3 users fit Cloudflare's limit of 10 per run.
+const MAX_USERS_PER_RUN = 3;
 
 // Very cold clothes also cover a merely cold day, but not the other way round.
 const COVERED_BY = { cold: ['cold', 'veryCold'], veryCold: ['veryCold'], hot: ['hot'] };
 
+// Creating a formatter is slow compared with Cloudflare's CPU limit, so reuse them.
+const formatters = new Map();
+
+function formatterFor(timeZone) {
+  if (!formatters.has(timeZone)) {
+    formatters.set(
+      timeZone,
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }),
+    );
+  }
+  return formatters.get(timeZone);
+}
+
 function localTime(nowMs, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(nowMs);
+  const parts = formatterFor(timeZone).formatToParts(nowMs);
   const part = (type) => parts.find((p) => p.type === type).value;
   return { date: `${part('year')}-${part('month')}-${part('day')}`, hour: Number(part('hour')) };
 }
@@ -51,40 +67,39 @@ export function shouldSend(outlook, recentOutlooks, temperatureChanged = false) 
 }
 
 /**
- * Tells each user the evening before if tomorrow is worth a message. Because the
- * check repeats until midnight, a restart or forecast outage at 20:00 only delays
- * the message, and each user's saved date stops it being sent twice.
+ * Tells users the evening before if tomorrow is worth a message. Runs on a schedule
+ * and handles a few users each time. Anyone not reached, or whose check failed, is
+ * picked up by a later run before their midnight, and each user's saved date stops
+ * the message being sent twice.
  */
 export function createNotifier({ messenger, store, fetchForecast, keyboard, now = Date.now, log = console }) {
-  async function checkAll() {
-    for (const [userId, user] of store.getUsers()) {
-      const { date, hour } = localTime(now(), user.timezone);
-      if (hour < NOTIFY_HOUR || user.lastCheckedDate === date) continue;
-      try {
-        const forecast = await fetchForecast(user.lat, user.lon);
-        const outlook = dayOutlook(getDay(forecast, 1));
-        const recent = Array.from({ length: NORMAL_WEATHER_DAYS }, (_, i) => dayOutlook(getDay(forecast, -i)));
-        const averages = Array.from({ length: NORMAL_WEATHER_DAYS + 2 }, (_, i) =>
-          wakingAverageC(getDay(forecast, i - NORMAL_WEATHER_DAYS)),
-        );
-        if (shouldSend(outlook, recent, temperatureChangeStarts(averages))) {
-          await messenger.sendText(userId, outlook.icons, keyboard);
-        }
-        store.updateUser(userId, { lastCheckedDate: date });
-      } catch (err) {
-        log.error('Daily check failed:', err.message);
-      }
+  async function checkUser(userId, user, date) {
+    const forecast = await fetchForecast(user.lat, user.lon);
+    const outlook = dayOutlook(getDay(forecast, 1));
+    const recent = Array.from({ length: NORMAL_WEATHER_DAYS }, (_, i) => dayOutlook(getDay(forecast, -i)));
+    const averages = Array.from({ length: NORMAL_WEATHER_DAYS + 2 }, (_, i) =>
+      wakingAverageC(getDay(forecast, i - NORMAL_WEATHER_DAYS)),
+    );
+    if (shouldSend(outlook, recent, temperatureChangeStarts(averages))) {
+      await messenger.sendText(userId, outlook.icons, keyboard);
     }
+    await store.markChecked(userId, date);
   }
 
   return {
-    checkAll,
-    start() {
-      const run = async () => {
-        await checkAll();
-        setTimeout(run, CHECK_INTERVAL_MS);
-      };
-      run();
+    async checkAll() {
+      let checked = 0;
+      for (const [userId, user] of await store.getUsers()) {
+        const { date, hour } = localTime(now(), user.timezone);
+        if (hour < NOTIFY_HOUR || user.lastCheckedDate === date) continue;
+        if (checked === MAX_USERS_PER_RUN) break;
+        checked++;
+        try {
+          await checkUser(userId, user, date);
+        } catch (err) {
+          log.error('Daily check failed:', err.message);
+        }
+      }
     },
   };
 }

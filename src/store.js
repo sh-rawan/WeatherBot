@@ -1,61 +1,55 @@
-import fs from 'node:fs';
-import { dirname } from 'node:path';
+const toUser = ({ lat, lon, timezone, last_checked_date: lastCheckedDate }) => ({
+  lat,
+  lon,
+  timezone,
+  ...(lastCheckedDate && { lastCheckedDate }),
+});
 
-const RENAME_ATTEMPTS = 5;
-const RENAME_RETRY_MS = 100;
-// Windows can briefly lock a file while OneDrive or antivirus software reads it.
-const FILE_LOCKED_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
-
-const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-function renameWithRetry(from, to) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      fs.renameSync(from, to);
-      return;
-    } catch (err) {
-      if (attempt === RENAME_ATTEMPTS || !FILE_LOCKED_CODES.has(err.code)) throw err;
-      sleep(RENAME_RETRY_MS);
-    }
-  }
-}
-
-/**
- * Writes to a temporary file, then swaps it into place in one step, so a crash
- * mid-save leaves the previous complete file rather than a half-written one.
- */
-function saveJson(path, data) {
-  const tempPath = `${path}.tmp`;
-  fs.mkdirSync(dirname(path), { recursive: true });
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { flush: true });
-  renameWithRetry(tempPath, path);
-}
-
-/** Saves each user's location. Without a path, data is kept in memory only. */
-export function createStore(path) {
-  const users = new Map(
-    path && fs.existsSync(path) ? Object.entries(JSON.parse(fs.readFileSync(path, 'utf8'))) : [],
-  );
-
-  const persist = () => {
-    if (path) saveJson(path, Object.fromEntries(users));
-  };
-
+/** Saves users in Cloudflare D1. See schema.sql for the table. */
+export function createD1Store(db) {
   return {
-    getLocation: (userId) => users.get(userId),
-    /** Replaces the whole record, so a new place gets checked again tonight. */
-    setLocation(userId, location) {
+    async getLocation(userId) {
+      const row = await db.prepare('SELECT * FROM users WHERE user_id = ?').bind(userId).first();
+      return row ? toUser(row) : undefined;
+    },
+    /** Clears the checked date, so a new place gets checked again tonight. */
+    async setLocation(userId, { lat, lon, timezone }) {
+      await db
+        .prepare(
+          `INSERT INTO users (user_id, lat, lon, timezone, last_checked_date) VALUES (?, ?, ?, ?, NULL)
+           ON CONFLICT (user_id) DO UPDATE SET
+             lat = excluded.lat, lon = excluded.lon, timezone = excluded.timezone, last_checked_date = NULL`,
+        )
+        .bind(userId, lat, lon, timezone)
+        .run();
+    },
+    async getUsers() {
+      const { results } = await db.prepare('SELECT * FROM users').all();
+      return results.map((row) => [row.user_id, toUser(row)]);
+    },
+    async markChecked(userId, date) {
+      await db.prepare('UPDATE users SET last_checked_date = ? WHERE user_id = ?').bind(date, userId).run();
+    },
+    async deleteUser(userId) {
+      await db.prepare('DELETE FROM users WHERE user_id = ?').bind(userId).run();
+    },
+  };
+}
+
+/** Keeps users in memory only, for the simulator and tests. */
+export function createMemoryStore() {
+  const users = new Map();
+  return {
+    getLocation: async (userId) => users.get(userId),
+    setLocation: async (userId, location) => {
       users.set(userId, location);
-      persist();
     },
-    getUsers: () => [...users],
-    updateUser(userId, fields) {
-      if (!users.has(userId)) return;
-      users.set(userId, { ...users.get(userId), ...fields });
-      persist();
+    getUsers: async () => [...users],
+    markChecked: async (userId, date) => {
+      if (users.has(userId)) users.set(userId, { ...users.get(userId), lastCheckedDate: date });
     },
-    deleteUser(userId) {
-      if (users.delete(userId)) persist();
+    deleteUser: async (userId) => {
+      users.delete(userId);
     },
   };
 }

@@ -1,7 +1,7 @@
 // Chat with the real bot logic and live forecasts in your terminal, with no Telegram account.
 import { createInterface } from 'node:readline';
 import { createBot } from '../src/bot.js';
-import { createStore } from '../src/store.js';
+import { createMemoryStore } from '../src/store.js';
 import { fetchForecast } from '../src/weather.js';
 
 const chat = { id: 1, type: 'private' };
@@ -12,7 +12,7 @@ const messenger = {
     if (keyboard) console.log(`\nButtons: ${keyboard.keyboard.flat().map((b) => `[${b.text}]`).join(' ')}`);
   },
 };
-const bot = createBot({ messenger, store: createStore(), fetchForecast });
+const bot = createBot({ messenger, store: createMemoryStore(), fetchForecast });
 
 const parseLocation = (line) => {
   const match = line.match(/^loc\s+(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/i);

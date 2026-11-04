@@ -51,7 +51,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
   const askForLocation = (userId, intro) =>
     messenger.sendText(userId, `${intro} Tap the button below to share your location.`, ASK_LOCATION_KEYBOARD);
 
-  const keyboardFor = (userId) => (store.getLocation(userId) ? MAIN_KEYBOARD : ASK_LOCATION_KEYBOARD);
+  const keyboardFor = async (userId) => ((await store.getLocation(userId)) ? MAIN_KEYBOARD : ASK_LOCATION_KEYBOARD);
 
   async function handleLocation(userId, { latitude: lat, longitude: lon }) {
     let text;
@@ -59,7 +59,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       const forecast = await fetchForecast(lat, lon);
       if (isCoveredLocation(forecast)) {
         text = `📍 Location saved. Here's today:\n\n${iconsFor(forecast, DAY_OFFSETS.today)}\n\n${NOTIFICATION_INTRO}`;
-        store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
+        await store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
       } else {
         text = NOT_COVERED;
       }
@@ -67,11 +67,11 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       log.error('Forecast failed:', err.message);
       text = FORECAST_ERROR;
     }
-    await messenger.sendText(userId, text, keyboardFor(userId));
+    await messenger.sendText(userId, text, await keyboardFor(userId));
   }
 
   async function sendDay(userId, dayOffset) {
-    const location = store.getLocation(userId);
+    const location = await store.getLocation(userId);
     let text;
     try {
       text = iconsFor(await fetchForecast(location.lat, location.lon), dayOffset);
@@ -92,7 +92,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     const text = rawText.toLowerCase();
 
     if (rawText === HELP_LABEL || text === 'help' || text === '/help') {
-      await messenger.sendText(userId, HELP_TEXT, keyboardFor(userId));
+      await messenger.sendText(userId, HELP_TEXT, await keyboardFor(userId));
       return;
     }
 
@@ -101,12 +101,12 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       await messenger.sendText(
         userId,
         'Sharing a location needs the Telegram mobile app. Please open this chat on your phone and tap the button there.',
-        keyboardFor(userId),
+        await keyboardFor(userId),
       );
       return;
     }
 
-    if (!store.getLocation(userId)) {
+    if (!(await store.getLocation(userId))) {
       const intro =
         rawText === '/start'
           ? "Hi! I'll tell you how your day looks, starting with rain. ☔ I cover Japan, Malaysia and India."
@@ -129,10 +129,10 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       const chat = message?.chat ?? memberUpdate?.chat;
       if (chat?.type !== 'private') return;
 
-      // Saved locations reload from JSON with string keys, so IDs are always strings.
+      // The database stores IDs as text, so use strings everywhere.
       const userId = String(chat.id);
       if (message) await handleMessage(userId, message);
-      else if (memberUpdate.new_chat_member.status === 'kicked') store.deleteUser(userId);
+      else if (memberUpdate.new_chat_member.status === 'kicked') await store.deleteUser(userId);
     },
   };
 }

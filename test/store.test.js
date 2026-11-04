@@ -1,115 +1,58 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, mock, test } from 'node:test';
-import { createStore } from '../src/store.js';
+import { test } from 'node:test';
+import { createMemoryStore } from '../src/store.js';
+import { createFakeD1, createD1StoreForTest } from './fake-d1.js';
 
 const TOKYO = { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' };
-const OSAKA = { lat: 34.69, lon: 135.5, timezone: 'Asia/Tokyo' };
+const DELHI = { lat: 28.61, lon: 77.21, timezone: 'Asia/Kolkata' };
 
-let dir;
-let path;
-
-beforeEach(() => {
-  dir = fs.mkdtempSync(join(tmpdir(), 'weatherbot-store-'));
-  path = join(dir, 'nested', 'users.json');
-});
-
-afterEach(() => {
-  mock.restoreAll();
-  fs.rmSync(dir, { recursive: true });
-});
-
-const fileError = (code) => Object.assign(new Error(code), { code });
-
-test('users, updates and deletions survive a reload', () => {
-  const store = createStore(path);
-  store.setLocation('a', TOKYO);
-  store.setLocation('b', OSAKA);
-  store.updateUser('a', { lastCheckedDate: '2026-11-04' });
-  store.deleteUser('b');
-
-  const reloaded = createStore(path);
-  assert.deepEqual(reloaded.getLocation('a'), { ...TOKYO, lastCheckedDate: '2026-11-04' });
-  assert.equal(reloaded.getLocation('b'), undefined);
-});
-
-test('no temporary file is left behind after a save', () => {
-  createStore(path).setLocation('a', TOKYO);
-  assert.deepEqual(fs.readdirSync(join(dir, 'nested')), ['users.json']);
-});
-
-test('a crash while writing the temporary file leaves the saved data intact', () => {
-  const store = createStore(path);
-  store.setLocation('a', TOKYO);
-
-  // A half-written temporary file is what a crash mid-save leaves behind.
-  const realWrite = fs.writeFileSync;
-  mock.method(fs, 'writeFileSync', (tempPath) => {
-    realWrite(tempPath, '{"a": {"lat": 35.');
-    throw new Error('crash');
+// Both stores must behave the same, because the tests and simulator use the memory one.
+for (const [name, createStore] of [
+  ['D1', () => createD1StoreForTest(createFakeD1())],
+  ['memory', createMemoryStore],
+]) {
+  test(`${name} store: saves, returns and lists users`, async () => {
+    const store = createStore();
+    assert.equal(await store.getLocation('a'), undefined);
+    await store.setLocation('a', TOKYO);
+    await store.setLocation('b', DELHI);
+    assert.deepEqual(await store.getLocation('a'), TOKYO);
+    const users = await store.getUsers();
+    assert.deepEqual(users.sort(), [
+      ['a', TOKYO],
+      ['b', DELHI],
+    ]);
   });
-  assert.throws(() => store.setLocation('a', OSAKA), /crash/);
-  mock.restoreAll();
 
-  assert.deepEqual(createStore(path).getLocation('a'), TOKYO);
-});
+  test(`${name} store: marks a user as checked`, async () => {
+    const store = createStore();
+    await store.setLocation('a', TOKYO);
+    await store.markChecked('a', '2026-11-04');
+    assert.deepEqual(await store.getLocation('a'), { ...TOKYO, lastCheckedDate: '2026-11-04' });
+  });
 
-test('a leftover temporary file from a crash does not block later saves', () => {
-  const store = createStore(path);
-  store.setLocation('a', TOKYO);
-  fs.writeFileSync(`${path}.tmp`, '{"half": ');
+  test(`${name} store: a new location replaces the old one and clears the checked date`, async () => {
+    const store = createStore();
+    await store.setLocation('a', TOKYO);
+    await store.markChecked('a', '2026-11-04');
+    await store.setLocation('a', DELHI);
+    assert.deepEqual(await store.getLocation('a'), DELHI);
+    assert.equal((await store.getUsers()).length, 1);
+  });
 
-  const restarted = createStore(path);
-  assert.deepEqual(restarted.getLocation('a'), TOKYO);
-  restarted.setLocation('a', OSAKA);
-  assert.deepEqual(createStore(path).getLocation('a'), OSAKA);
-});
-
-for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
-  test(`a file briefly locked with ${code} is retried until the save succeeds`, () => {
-    const store = createStore(path);
-    const realRename = fs.renameSync;
-    let attempts = 0;
-    mock.method(fs, 'renameSync', (from, to) => {
-      if (++attempts < 3) throw fileError(code);
-      realRename(from, to);
-    });
-    store.setLocation('a', TOKYO);
-    assert.equal(attempts, 3);
-    mock.restoreAll();
-    assert.deepEqual(createStore(path).getLocation('a'), TOKYO);
+  test(`${name} store: deletes a user and ignores unknown ones`, async () => {
+    const store = createStore();
+    await store.setLocation('a', TOKYO);
+    await store.deleteUser('a');
+    await store.deleteUser('nobody');
+    await store.markChecked('nobody', '2026-11-04');
+    assert.equal(await store.getLocation('a'), undefined);
+    assert.deepEqual(await store.getUsers(), []);
   });
 }
 
-test('a file that stays locked fails the save after 5 tries, keeping the old data', () => {
-  const store = createStore(path);
-  store.setLocation('a', TOKYO);
-  let attempts = 0;
-  mock.method(fs, 'renameSync', () => {
-    attempts++;
-    throw fileError('EPERM');
-  });
-  assert.throws(() => store.setLocation('a', OSAKA), /EPERM/);
-  assert.equal(attempts, 5);
-  mock.restoreAll();
-  assert.deepEqual(createStore(path).getLocation('a'), TOKYO);
-});
-
-test('other errors are not retried', () => {
-  const store = createStore(path);
-  let attempts = 0;
-  mock.method(fs, 'renameSync', () => {
-    attempts++;
-    throw fileError('ENOSPC');
-  });
-  assert.throws(() => store.setLocation('a', TOKYO), /ENOSPC/);
-  assert.equal(attempts, 1);
-});
-
-test('without a path nothing is written', () => {
-  const write = mock.method(fs, 'writeFileSync');
-  createStore().setLocation('a', TOKYO);
-  assert.equal(write.mock.callCount(), 0);
+test('D1 store: data survives between store instances', async () => {
+  const db = createFakeD1();
+  await createD1StoreForTest(db).setLocation('a', TOKYO);
+  assert.deepEqual(await createD1StoreForTest(db).getLocation('a'), TOKYO);
 });

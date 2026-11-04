@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { createNotifier, shouldSend, temperatureChangeStarts } from '../src/notifier.js';
-import { createStore } from '../src/store.js';
+import { createMemoryStore } from '../src/store.js';
 
 const KEYBOARD = { Buttons: [] };
 const PAST_DAYS = 7;
@@ -41,7 +38,7 @@ const forecast = ({ rainy = true, lightRain = false, tempC = 20, recentTempC = 2
 
 function setup({ time = '2026-11-04T20:00:00+09:00', fetchForecast = async () => forecast(), users = ['u1'] } = {}) {
   const sent = [];
-  const store = createStore();
+  const store = createMemoryStore();
   for (const id of users) store.setLocation(id, { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   const state = { time };
   const notifier = createNotifier({
@@ -300,7 +297,7 @@ test('a failed forecast is retried on the next check', async () => {
 });
 
 test('a failed send is retried and not recorded as checked', async () => {
-  const store = createStore();
+  const store = createMemoryStore();
   store.setLocation('u1', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   let fail = true;
   const delivered = [];
@@ -318,7 +315,7 @@ test('a failed send is retried and not recorded as checked', async () => {
     log: { error() {} },
   });
   await notifier.checkAll();
-  assert.equal(store.getLocation('u1').lastCheckedDate, undefined);
+  assert.equal((await store.getLocation('u1')).lastCheckedDate, undefined);
   fail = false;
   await notifier.checkAll();
   assert.equal(delivered.length, 1);
@@ -345,15 +342,29 @@ test('moving location gets checked again tonight', async () => {
   assert.equal(sent.length, 2);
 });
 
-test('the checked date survives a restart, so nothing is sent twice', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'weatherbot-'));
-  try {
-    const path = join(dir, 'users.json');
-    const store = createStore(path);
-    store.setLocation('u1', { lat: 35.68, lon: 139.76 });
-    store.updateUser('u1', { lastCheckedDate: '2026-11-04' });
-    assert.equal(createStore(path).getLocation('u1').lastCheckedDate, '2026-11-04');
-  } finally {
-    rmSync(dir, { recursive: true });
-  }
+test('each run checks at most 3 users, and later runs reach the rest', async () => {
+  const { notifier, sent } = setup({ users: ['a', 'b', 'c', 'd', 'e'] });
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.to), ['a', 'b', 'c']);
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.to), ['a', 'b', 'c', 'd', 'e']);
+  await notifier.checkAll();
+  assert.equal(sent.length, 5);
+});
+
+test('users already checked today do not use up a run', async () => {
+  const { notifier, sent, store } = setup({ users: ['a', 'b', 'c', 'd'] });
+  await store.markChecked('a', '2026-11-04');
+  await store.markChecked('b', '2026-11-04');
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.to), ['c', 'd']);
+});
+
+test('users in a timezone before 20:00 do not use up a run', async () => {
+  const { notifier, sent, store, state } = setup({ users: [] });
+  for (const id of ['in1', 'in2', 'in3']) await store.setLocation(id, { lat: 28.61, lon: 77.21, timezone: 'Asia/Kolkata' });
+  await store.setLocation('tokyo', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  state.time = '2026-11-04T11:00:00Z'; // 20:00 in Tokyo, 16:30 in India.
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.to), ['tokyo']);
 });

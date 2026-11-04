@@ -35,7 +35,7 @@ Weather at night shows an icon but never causes a message by itself. You can cha
 
 Tapping **Today** or **Tomorrow** replies with the same icons at any time, and **ℹ️ Help** explains the icons and timings.
 
-The bot has to be running for notifications to go out. If it's off at 20:00, the message is sent when it next runs before midnight.
+The check runs every 5 minutes and handles up to 3 users each time, so anyone not reached at 20:00 is picked up by a later run before their midnight.
 
 ## Try it without Telegram
 
@@ -56,14 +56,33 @@ you> tomorrow
 npm test
 ```
 
-## Connect it to Telegram
+## Hosting
+
+The bot runs on [Cloudflare Workers](https://developers.cloudflare.com/workers/), so it doesn't need your PC or ngrok. Telegram sends each message to a webhook, a schedule runs the evening check, and users are saved in a Cloudflare D1 database.
+
+To deploy a code change:
+
+```
+npm run deploy
+```
+
+To watch the live bot's logs:
+
+```
+npm run logs
+```
+
+## Set it up from scratch
 
 1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and follow the prompts to get a token.
-2. Paste the token into `.env` as `TELEGRAM_BOT_TOKEN`. See `.env.example`.
-3. Start the bot: `npm start`
-4. Open your bot in the Telegram **mobile** app and press **Start**. Sharing a location from the button may not work on desktop.
-
-The bot fetches its own messages from Telegram, so it doesn't need ngrok or a public URL. Only run one copy at a time, because Telegram rejects a second one.
+2. Copy `.env.example` to `.env`. Add the token, and set `WEBHOOK_SECRET` to a long random string.
+3. Log in to Cloudflare: `npx wrangler login`
+4. Create the database: `npx wrangler d1 create weatherbot`, then put its ID in `wrangler.jsonc`.
+5. Create the table: `npx wrangler d1 execute weatherbot --remote --file schema.sql`
+6. Store both values from `.env` in Cloudflare: `npx wrangler secret put TELEGRAM_BOT_TOKEN` and `npx wrangler secret put WEBHOOK_SECRET`
+7. Deploy: `npm run deploy`. On a new account, Cloudflare first asks you to choose a `workers.dev` subdomain.
+8. Point Telegram at the printed address: `npm run set-webhook -- https://your-worker.workers.dev`
+9. Open your bot in the Telegram **mobile** app and press **Start**. Sharing a location from the button may not work on desktop.
 
 ## Code layout
 
@@ -73,5 +92,8 @@ The bot fetches its own messages from Telegram, so it doesn't need ngrok or a pu
 | `src/outlook.js` | Chooses the icons for each part of the day |
 | `src/notifier.js` | Decides whether a day is worth a message, and sends it |
 | `src/bot.js` | Conversation flow and keyboards |
-| `src/telegram.js` | Telegram API calls and fetching new messages |
-| `src/store.js` | Saves user locations to `data/users.json` |
+| `src/telegram.js` | Telegram API calls |
+| `src/store.js` | Saves user locations in D1 |
+| `src/worker.js` | Cloudflare entry point for the webhook and schedule |
+| `schema.sql` | The database table |
+| `wrangler.jsonc` | Cloudflare settings, including the schedule |
