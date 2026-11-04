@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dayOutlook } from '../src/outlook.js';
+import { dayCard, dayOutlook, daySummary } from '../src/outlook.js';
 
 const slots = (count) =>
   Array.from({ length: count }, (_, hour) => ({
     hour,
-    tempC: 25,
+    feelsC: 25,
     precipMm: 0,
     precipProb: 0,
     code: 3,
@@ -83,36 +83,36 @@ test('night rain shows an icon but does not count as a reason to message', () =>
 });
 
 test('hours before 06:00 of the day itself are ignored', () => {
-  assert.equal(dayOutlook(day({ 3: { precipMm: 5, precipProb: 100, tempC: -5 } })).icons, '🚫-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 3: { precipMm: 5, precipProb: 100, feelsC: -5 } })).icons, '🚫-🚫-🚫-🚫');
 });
 
 test('mildly cold shows a leaf at 23°C and below', () => {
-  assert.equal(dayOutlook(day({ 8: { tempC: 23.1 } })).icons, '🚫-🚫-🚫-🚫');
-  const outlook = dayOutlook(day({ 8: { tempC: 23 } }));
+  assert.equal(dayOutlook(day({ 8: { feelsC: 23.1 } })).icons, '🚫-🚫-🚫-🚫');
+  const outlook = dayOutlook(day({ 8: { feelsC: 23 } }));
   assert.equal(outlook.icons, '🍃-🚫-🚫-🚫');
   assert.deepEqual(outlook.weather, ['cool']);
 });
 
 test('very cold shows a jacket at 15°C and below', () => {
-  assert.equal(dayOutlook(day({ 8: { tempC: 15.1 } })).icons, '🍃-🚫-🚫-🚫');
-  const outlook = dayOutlook(day({ 8: { tempC: 15 } }));
+  assert.equal(dayOutlook(day({ 8: { feelsC: 15.1 } })).icons, '🍃-🚫-🚫-🚫');
+  const outlook = dayOutlook(day({ 8: { feelsC: 15 } }));
   assert.equal(outlook.icons, '🧥-🚫-🚫-🚫');
   assert.deepEqual(outlook.weather, ['cold']);
 });
 
 test('freezing shows a snowflake below 5°C', () => {
-  assert.equal(dayOutlook(day({ 8: { tempC: 5 } })).icons, '🧥-🚫-🚫-🚫');
-  const outlook = dayOutlook(day({ 8: { tempC: 4.9 }, 14: { tempC: 5 }, 20: { tempC: 20 } }));
+  assert.equal(dayOutlook(day({ 8: { feelsC: 5 } })).icons, '🧥-🚫-🚫-🚫');
+  const outlook = dayOutlook(day({ 8: { feelsC: 4.9 }, 14: { feelsC: 5 }, 20: { feelsC: 20 } }));
   assert.equal(outlook.icons, '❄️-🧥-🍃-🚫');
   assert.deepEqual(outlook.weather, ['veryCold', 'cold', 'cool']);
 });
 
 test('a clear sky at 25°C or more shows the sun, but is not worth a message', () => {
-  const sunny = dayOutlook(day({ 13: { tempC: 25, code: 1 } }));
+  const sunny = dayOutlook(day({ 13: { feelsC: 25, code: 1 } }));
   assert.equal(sunny.icons, '🚫-☀️-🚫-🚫');
   assert.deepEqual(sunny.weather, []);
-  assert.equal(dayOutlook(day({ 13: { tempC: 24.9, code: 0 } })).icons, '🚫-🚫-🚫-🚫');
-  assert.equal(dayOutlook(day({ 13: { tempC: 30, code: 2 } })).icons, '🚫-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 13: { feelsC: 24.9, code: 0 } })).icons, '🚫-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 13: { feelsC: 30, code: 2 } })).icons, '🚫-🚫-🚫-🚫');
 });
 
 test('feeling like 35°C or more shows the sun under any sky, and is worth a message', () => {
@@ -123,39 +123,63 @@ test('feeling like 35°C or more shows the sun under any sky, and is worth a mes
 });
 
 test('sweaty and sunny together still show one sun', () => {
-  assert.equal(dayOutlook(day({ 13: { tempC: 33, feelsC: 40, code: 0 } })).icons, '🚫-☀️-🚫-🚫');
+  assert.equal(dayOutlook(day({ 13: { feelsC: 40, code: 0 } })).icons, '🚫-☀️-🚫-🚫');
 });
 
 test('no sun icon after dark, however warm it is', () => {
-  const hot = { tempC: 31, feelsC: 40, code: 0 };
+  const hot = { feelsC: 40, code: 0 };
   const outlook = dayOutlook(day({ 20: hot }, { 1: hot }));
   assert.equal(outlook.icons, '🚫-🚫-🚫-🚫');
   assert.deepEqual(outlook.weather, []);
 });
 
 test('a cool start to a hot morning shows both icons', () => {
-  const outlook = dayOutlook(day({ 6: { tempC: 22 }, 11: { tempC: 31, feelsC: 36, code: 0 } }));
+  const outlook = dayOutlook(day({ 6: { feelsC: 22 }, 11: { feelsC: 36, code: 0 } }));
   assert.equal(outlook.icons, '🍃☀️-🚫-🚫-🚫');
   assert.deepEqual(outlook.weather, ['cool', 'hot']);
 });
 
 test('rain and sun in the same part show both icons', () => {
-  assert.equal(dayOutlook(day({ 13: { tempC: 26, code: 0 }, 14: RAIN })).icons, '🚫-☔☀️-🚫-🚫');
+  assert.equal(dayOutlook(day({ 13: { feelsC: 26, code: 0 }, 14: RAIN })).icons, '🚫-☔☀️-🚫-🚫');
 });
 
 test('rain and cold in the same part show both icons', () => {
-  assert.equal(dayOutlook(day({ 8: { tempC: 10, ...RAIN } })).icons, '☔🧥-🚫-🚫-🚫');
-  assert.equal(dayOutlook(day({ 8: { tempC: 20, precipProb: 55 } })).icons, '🌦️🍃-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 8: { feelsC: 10, ...RAIN } })).icons, '☔🧥-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 8: { feelsC: 20, precipProb: 55 } })).icons, '🌦️🍃-🚫-🚫-🚫');
 });
 
 test('night cold shows an icon but does not count as a reason to message', () => {
-  const outlook = dayOutlook(day({}, { 3: { tempC: -2 } }));
+  const outlook = dayOutlook(day({}, { 3: { feelsC: -2 } }));
   assert.equal(outlook.icons, '🚫-🚫-🚫-❄️');
   assert.deepEqual(outlook.weather, []);
 });
 
 test('snow does not trigger either rain icon, but the cold still shows', () => {
-  const outlook = dayOutlook(day({ 13: { tempC: -1, precipMm: 4, precipProb: 90, code: 73 } }));
+  const outlook = dayOutlook(day({ 13: { feelsC: -1, precipMm: 4, precipProb: 90, code: 73 } }));
   assert.equal(outlook.icons, '🚫-❄️-🚫-🚫');
   assert.equal(outlook.umbrella, false);
+});
+
+test('the summary line shows four parts split by dots, with no time icons', () => {
+  const summary = daySummary(day({ 8: RAIN, 14: { feelsC: 10 }, 20: { feelsC: 10, ...RAIN } }));
+  assert.equal(summary, '☔ · 🧥 · ☔🧥 · 🚫');
+  assert.doesNotMatch(summary, /[A-Za-z0-9]/);
+  for (const part of ['🌅', '🌞', '🌇', '🌙']) assert.ok(!summary.includes(part));
+});
+
+test('the plain card has no words or date', () => {
+  const card = dayCard(day({ 8: RAIN, 14: { feelsC: 10 } }));
+  assert.equal(card, '🌅  ☔\n🌞  🧥\n🌇  🚫\n🌙  🚫');
+  assert.doesNotMatch(card, /[A-Za-z0-9]/);
+});
+
+test('cold icons use the feels-like temperature, not the actual one', () => {
+  assert.equal(dayOutlook(day({ 8: { tempC: 26, feelsC: 20 } })).icons, '🍃-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 8: { tempC: 7, feelsC: 4 } })).icons, '❄️-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 8: { tempC: 14, feelsC: 16 } })).icons, '🍃-🚫-🚫-🚫');
+});
+
+test('the sunny icon uses the feels-like temperature, not the actual one', () => {
+  assert.equal(dayOutlook(day({ 13: { tempC: 26, feelsC: 24, code: 0 } })).icons, '🚫-🚫-🚫-🚫');
+  assert.equal(dayOutlook(day({ 13: { tempC: 24, feelsC: 26, code: 0 } })).icons, '🚫-☀️-🚫-🚫');
 });

@@ -1,5 +1,5 @@
-import { buildSuggestion } from './feedback.js';
-import { dayCard, dayOutlook, wakingAverageC } from './outlook.js';
+import { buildSuggestion, cardMessage } from './feedback.js';
+import { dayOutlook, wakingAverageC } from './outlook.js';
 import { getDay } from './weather.js';
 
 export const NOTIFY_HOUR = 20;
@@ -80,7 +80,7 @@ export const shouldSend = (...args) => sendReasons(...args).length > 0;
  * picked up by a later run before their midnight, and each user's saved date stops
  * the message being sent twice.
  */
-export function createNotifier({ messenger, store, fetchForecast, keyboard, now = Date.now, log = console }) {
+export function createNotifier({ messenger, store, fetchForecast, now = Date.now, log = console }) {
   async function checkUser(userId, user, date) {
     const forecast = await fetchForecast(user.lat, user.lon);
     const tomorrow = getDay(forecast, 1);
@@ -93,7 +93,8 @@ export function createNotifier({ messenger, store, fetchForecast, keyboard, now 
       await store.markChecked(userId, date);
       return;
     }
-    const message = await messenger.sendText(userId, dayCard(tomorrow, 'Tomorrow'), keyboard);
+    const card = cardMessage(tomorrow);
+    const message = await messenger.sendText(userId, card.text, card.keyboard);
     const suggestion = buildSuggestion({
       userId,
       messageId: message.message_id,

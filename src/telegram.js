@@ -1,5 +1,6 @@
 const API = 'https://api.telegram.org';
 export const WEBHOOK_PATH = '/telegram/webhook';
+export const TEST_MESSAGE_PATH = '/admin/test-message';
 
 export function createTelegramClient({ token }) {
   async function call(method, body) {

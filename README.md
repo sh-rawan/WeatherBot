@@ -6,27 +6,26 @@ Requires Node 22.9 or newer. There are no dependencies to install.
 
 ## Daily notifications
 
-Every evening from 20:00 local time, the bot checks tomorrow's forecast for each user. If it's worth a message, it sends a small card with the icons for each part of the day:
+Every evening from 20:00 local time, the bot checks tomorrow's forecast for each user. If it's worth a message, it sends a small icons-only card. The message text holds the weather icons on one line, in the order morning, afternoon, evening, night, because phone notifications only show text. Below it is a grid of Telegram button tiles, with a picture for each part of the day above its weather icons, then 👍 and 👎:
 
 ```
-Tomorrow · Thu 5 Nov
+☔ · 🧥 · 🚫 · 🧥
 
-☔  Morning
-🧥  Afternoon
-🚫  Evening
-🧥  Night
+[🌅] [🌞] [🌇] [🌙]
+[☔] [🧥] [🚫] [🧥]
+[  👍  ] [  👎  ]
 ```
 
-The parts are morning (06:00–12:00), afternoon (12:00–18:00), evening (18:00–24:00) and the night that follows (00:00–06:00).
+The parts are 🌅 morning (06:00–12:00), 🌞 afternoon (12:00–18:00), 🌇 evening (18:00–24:00) and 🌙 the night that follows (00:00–06:00).
 
 | Icon | Meaning | Rule for that part of the day |
 | --- | --- | --- |
 | ☔ | Must carry an umbrella | Rain totals at least 2 mm, or any hour has at least a 70% chance and rain totals at least 1 mm |
 | 🌦️ | A little rain | Any other rain: any hour has at least a 50% chance, or rain totals at least 1 mm |
-| 🍃 | Mildly cold | Coldest hour is 23°C or below |
-| 🧥 | Very cold | Coldest hour is 15°C or below |
-| ❄️ | Freezing | Coldest hour is below 5°C |
-| ☀️ | Sweaty or sunny | Before 18:00, an hour feels like 35°C or more, or has a clear sky at 25°C or more |
+| 🍃 | Mildly cold | Coldest hour feels like 23°C or below |
+| 🧥 | Very cold | Coldest hour feels like 15°C or below |
+| ❄️ | Freezing | Coldest hour feels like below 5°C |
+| ☀️ | Sweaty or sunny | Before 18:00, an hour feels like 35°C or more, or has a clear sky and feels like 25°C or more |
 | 🚫 | Nothing needed | None of the above |
 
 A part can show two icons, such as ☔🧥.
@@ -54,6 +53,15 @@ To see totals:
 ```
 npm run feedback
 ```
+
+## Admin testing
+
+One user is the admin, set by the `ADMIN_USER_ID` secret in Cloudflare. Test messages only ever go to the admin:
+
+- The admin can send `/test` to the bot. From anyone else, it's treated as an unknown message.
+- `npm run test-message` sends a test card through the live bot, using `WORKER_URL` and `WEBHOOK_SECRET` from `.env`.
+
+Test cards show today's forecast, whether or not it would normally send a message. They're logged with the source `test`, so leave those rows out when analysing feedback.
 
 ## Try it without Telegram
 
@@ -98,7 +106,7 @@ npm run logs
 4. Create the database: `npx wrangler d1 create weatherbot`, then put its ID in `wrangler.jsonc`.
 5. Create the table: `npx wrangler d1 execute weatherbot --remote --file schema.sql`
 6. Store both values from `.env` in Cloudflare: `npx wrangler secret put TELEGRAM_BOT_TOKEN` and `npx wrangler secret put WEBHOOK_SECRET`
-7. Deploy: `npm run deploy`. On a new account, Cloudflare first asks you to choose a `workers.dev` subdomain.
+7. Deploy: `npm run deploy`. Later, store your Telegram user ID as the admin: `npx wrangler secret put ADMIN_USER_ID`. On a new account, Cloudflare first asks you to choose a `workers.dev` subdomain.
 8. Point Telegram at the printed address: `npm run set-webhook -- https://your-worker.workers.dev`
 9. Open your bot in the Telegram **mobile** app and press **Start**. Sharing a location from the button may not work on desktop.
 

@@ -3,10 +3,8 @@ import { test } from 'node:test';
 import { createNotifier, shouldSend, temperatureChangeStarts } from '../src/notifier.js';
 import { createMemoryStore } from '../src/store.js';
 
-const KEYBOARD = { Buttons: [] };
-
-// Reads the icons back out of a day card, as morning-afternoon-evening-night.
-const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
+// Reads the weather tiles of a card, as morning-afternoon-evening-night.
+const iconsIn = (keyboard) => keyboard.inline_keyboard[1].map((tile) => tile.text).join('-');
 const PAST_DAYS = 7;
 const TODAY_START = PAST_DAYS * 24;
 const TOMORROW_START = TODAY_START + 24;
@@ -50,7 +48,6 @@ function setup({ time = '2026-11-04T20:00:00+09:00', fetchForecast = async () =>
     },
     store,
     fetchForecast,
-    keyboard: KEYBOARD,
     now: () => new Date(state.time).getTime(),
     log: { error() {} },
   });
@@ -81,6 +78,7 @@ test('a sent card is logged with its reasons and weather, with no reaction yet',
   assert.equal(logged.snapshot.parts[0].rainMm, 3);
   assert.equal(logged.snapshot.parts[0].rainChance, 80);
   assert.equal(logged.snapshot.parts[0].coldestC, 25);
+  assert.equal(logged.snapshot.parts[0].minFeelsC, 25);
 });
 
 test('each reason that applies is logged', async () => {
@@ -107,7 +105,7 @@ test('light rain still shows its icon when something else sends a message', asyn
     fetchForecast: async () => forecast({ lightRain: true, tempC: 5 }),
   });
   await notifier.checkAll();
-  assert.equal(iconsIn(sent[0].text), '🌦️🧥-🧥-🧥-🧥');
+  assert.equal(iconsIn(sent[0].keyboard), '🌦️🧥-🧥-🧥-🧥');
 });
 
 test('cold or hot that did not happen recently sends', () => {
@@ -166,7 +164,7 @@ test('a real forecast with a 4°C drop sends, even with the same icons all week'
     fetchForecast: async () => forecast({ rainy: false, recentTempC: 12, tempC: 8 }),
   });
   await notifier.checkAll();
-  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['🧥-🧥-🧥-🧥']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.keyboard)), ['🧥-🧥-🧥-🧥']);
 });
 
 test('a real forecast with a smaller drop and the same icons stays quiet', async () => {
@@ -182,7 +180,7 @@ test('a real forecast with a 4°C rise sends', async () => {
     fetchForecast: async () => forecast({ rainy: false, recentTempC: 16, tempC: 20 }),
   });
   await notifier.checkAll();
-  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['🍃-🍃-🍃-🍃']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.keyboard)), ['🍃-🍃-🍃-🍃']);
 });
 
 test('a real forecast does not repeat a change that began today', async () => {
@@ -211,13 +209,10 @@ test('nothing is checked before 20:00 Japan time', async () => {
 test('at 20:00 Japan time, a rainy tomorrow sends a day card', async () => {
   const { notifier, sent } = setup();
   await notifier.checkAll();
-  assert.deepEqual(sent, [
-    {
-      to: 'u1',
-      text: '*Tomorrow · Thu 5 Nov*\n\n☔  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night',
-      keyboard: KEYBOARD,
-    },
-  ]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'u1');
+  assert.equal(sent[0].text, '☔ · 🚫 · 🚫 · 🚫');
+  assert.equal(iconsIn(sent[0].keyboard), '☔-🚫-🚫-🚫');
 });
 
 test('Japan time is used whatever the server clock zone: 20:00 JST is 11:00 UTC', async () => {
@@ -297,7 +292,7 @@ test('the first cold day after a mild week sends a message', async () => {
   const { notifier, sent } = setup({ fetchForecast: async () => forecast({ rainy: false, tempC: 5 }) });
   await notifier.checkAll();
   assert.equal(sent.length, 1);
-  assert.equal(iconsIn(sent[0].text), '🧥-🧥-🧥-🧥');
+  assert.equal(iconsIn(sent[0].keyboard), '🧥-🧥-🧥-🧥');
 });
 
 test('another cold day in a cold week sends nothing', async () => {
@@ -354,7 +349,6 @@ test('a failed send is retried and not recorded as checked', async () => {
     },
     store,
     fetchForecast: async () => forecast(),
-    keyboard: KEYBOARD,
     now: () => new Date('2026-11-04T20:00:00+09:00').getTime(),
     log: { error() {} },
   });

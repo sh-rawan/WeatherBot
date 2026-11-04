@@ -1,4 +1,4 @@
-import { buildSuggestion, isReaction, reactionKeyboard } from './feedback.js';
+import { buildSuggestion, cardMessage, isReaction, withReaction } from './feedback.js';
 import { NOTIFY_HOUR } from './notifier.js';
 import { COLD_C, COOL_C, dayCard, VERY_COLD_C } from './outlook.js';
 import { getDay, isCoveredLocation } from './weather.js';
@@ -14,18 +14,18 @@ const HELP_TEXT = `*What the icons mean*
 
 ☔  Take an umbrella
 🌦️  A little rain, umbrella optional
-🍃  Mildly cold, ${COOL_C}°C or below
-🧥  Very cold, ${COLD_C}°C or below
-❄️  Freezing, below ${VERY_COLD_C}°C
+🍃  Mildly cold, feels ${COOL_C}°C or below
+🧥  Very cold, feels ${COLD_C}°C or below
+❄️  Freezing, feels below ${VERY_COLD_C}°C
 ☀️  Sweaty hot, or sunny
 🚫  Nothing needed
 
 *Times of day*
 
-Morning  ·  06:00–12:00
-Afternoon  ·  12:00–18:00
-Evening  ·  18:00–24:00
-Night  ·  00:00–06:00
+🌅  Morning, 06:00–12:00
+🌞  Afternoon, 12:00–18:00
+🌇  Evening, 18:00–24:00
+🌙  Night, 00:00–06:00
 
 *When I message you*
 
@@ -53,13 +53,16 @@ export const MAIN_KEYBOARD = {
 };
 
 const DAYS = {
-  today: { offset: 0, label: 'Today', source: 'today' },
-  tomorrow: { offset: 1, label: 'Tomorrow', source: 'tomorrow' },
+  today: { offset: 0, source: 'today', reasons: ['requested'] },
+  tomorrow: { offset: 1, source: 'tomorrow', reasons: ['requested'] },
 };
 
-const cardFor = (forecast, { offset, label }) => dayCard(getDay(forecast, offset), label);
+// Tagged in the log, so test cards can be left out of any analysis.
+const TEST_DAY = { offset: 0, source: 'test', reasons: ['test'] };
 
-export function createBot({ messenger, store, fetchForecast, log = console }) {
+const cardFor = (forecast, { offset }) => dayCard(getDay(forecast, offset));
+
+export function createBot({ messenger, store, fetchForecast, adminId, log = console }) {
   const askForLocation = (userId, intro) =>
     messenger.sendText(userId, `${intro} Tap the button below to share your location.`, ASK_LOCATION_KEYBOARD);
 
@@ -82,7 +85,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     await messenger.sendText(userId, text, await keyboardFor(userId));
   }
 
-  async function sendDay(userId, { offset, label, source }) {
+  async function sendDay(userId, { offset, source, reasons }) {
     const location = await store.getLocation(userId);
     let day;
     try {
@@ -93,7 +96,8 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       return;
     }
 
-    const message = await messenger.sendText(userId, dayCard(day, label), reactionKeyboard());
+    const card = cardMessage(day);
+    const message = await messenger.sendText(userId, card.text, card.keyboard);
     try {
       await store.logSuggestion(
         buildSuggestion({
@@ -101,7 +105,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
           messageId: message.message_id,
           source,
           day,
-          reasons: ['requested'],
+          reasons,
           timezone: location.timezone,
           sentAt: new Date().toISOString(),
         }),
@@ -113,11 +117,14 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
   }
 
   async function handleReaction(userId, { id, data, message }) {
-    if (isReaction(data)) {
-      await store.recordReaction(userId, message.message_id, data, new Date().toISOString());
+    // Tiles only display information, but Telegram still needs an answer to stop the spinner.
+    if (!isReaction(data)) {
+      await messenger.answerButton(id);
+      return;
     }
+    await store.recordReaction(userId, message.message_id, data, new Date().toISOString());
     await messenger.answerButton(id, 'Thanks for the feedback!');
-    if (isReaction(data)) await messenger.setMessageKeyboard(userId, message.message_id, reactionKeyboard(data));
+    await messenger.setMessageKeyboard(userId, message.message_id, withReaction(message.reply_markup, data));
   }
 
   async function handleMessage(userId, message) {
@@ -153,6 +160,11 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       return;
     }
 
+    if (text === '/test' && adminId && userId === String(adminId)) {
+      await sendDay(userId, TEST_DAY);
+      return;
+    }
+
     if (Object.hasOwn(DAYS, text)) {
       await sendDay(userId, DAYS[text]);
       return;
@@ -162,6 +174,13 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
   }
 
   return {
+    /** Sends a test card to the admin, and never to anyone else. */
+    async sendTestCard() {
+      if (!adminId) throw new Error('No admin is set');
+      const userId = String(adminId);
+      if (!(await store.getLocation(userId))) throw new Error('The admin has no saved location');
+      await sendDay(userId, TEST_DAY);
+    },
     async handleUpdate({ message, my_chat_member: memberUpdate, callback_query: buttonTap }) {
       // Only private chats: a location shared in a group shouldn't drive anyone's forecast.
       const chat = message?.chat ?? memberUpdate?.chat ?? buttonTap?.message?.chat;

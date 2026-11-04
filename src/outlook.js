@@ -10,6 +10,7 @@ const UMBRELLA_LIKELY_MM = 1;
 const LIGHT_RAIN_TOTAL_MM = 1;
 const LIGHT_RAIN_PROBABILITY = 50;
 
+// All temperature limits for icons are compared with the feels-like temperature.
 export const COOL_C = 23;
 export const COLD_C = 15;
 export const VERY_COLD_C = 5;
@@ -17,7 +18,8 @@ const SWEATY_FEELS_C = 35;
 const SUNNY_C = 25;
 const CLEAR_SKY_MAX_CODE = 1; // WMO: 0 is clear, 1 is mainly clear.
 
-const PART_NAMES = ['Morning', 'Afternoon', 'Evening', 'Night'];
+// Morning, afternoon, evening and night, as pictures.
+export const PART_ICONS = ['🌅', '🌞', '🌇', '🌙'];
 
 const NOTHING_ICON = '🚫';
 const RAIN_ICONS = { umbrella: '☔', light: '🌦️' };
@@ -42,7 +44,7 @@ function rainLevel(hours) {
 function describePart({ hours, daylight }) {
   const rain = rainLevel(hours);
 
-  const coldest = Math.min(...hours.map((h) => h.tempC));
+  const coldest = Math.min(...hours.map((h) => h.feelsC));
   let cold = null;
   if (coldest < VERY_COLD_C) cold = 'veryCold';
   else if (coldest <= COLD_C) cold = 'cold';
@@ -50,7 +52,7 @@ function describePart({ hours, daylight }) {
 
   // The sun means sweaty or sunny. Only sweaty counts as weather worth a message.
   const sweaty = daylight && hours.some((h) => h.feelsC >= SWEATY_FEELS_C);
-  const sunny = daylight && hours.some((h) => h.tempC >= SUNNY_C && h.code <= CLEAR_SKY_MAX_CODE);
+  const sunny = daylight && hours.some((h) => h.feelsC >= SUNNY_C && h.code <= CLEAR_SKY_MAX_CODE);
 
   const icons = `${RAIN_ICONS[rain] ?? ''}${COLD_ICONS[cold] ?? ''}${sweaty || sunny ? SUN_ICON : ''}`;
   return {
@@ -86,19 +88,12 @@ export function dayOutlook(day) {
   };
 }
 
-function formatDate(date) {
-  return new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-}
+const partsWithIcons = (day) => dayOutlook(day).icons.split('-').map((icon, i) => [PART_ICONS[i], icon]);
 
-/** The message for a day: a dated title, then one line per part of the day. */
-export function dayCard(day, label) {
-  const lines = dayOutlook(day)
-    .icons.split('-')
-    .map((icon, i) => `${icon}  ${PART_NAMES[i]}`);
-  return `*${label} · ${formatDate(day.date)}*\n\n${lines.join('\n')}`;
+/** The day on one line, such as 🧥 · ☔🧥 · 🚫 · 🧥. Phone notifications only show message text. */
+export const daySummary = (day) => dayOutlook(day).icons.split('-').join(' · ');
+
+/** A day as plain text lines, for messages that can't carry the tile card. */
+export function dayCard(day) {
+  return partsWithIcons(day).map(([part, icon]) => `${part}  ${icon}`).join('\n');
 }

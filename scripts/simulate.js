@@ -10,7 +10,7 @@ const messenger = {
   async sendText(_chatId, text, keyboard) {
     console.log(`\n${text}`);
     const buttons = keyboard?.keyboard ?? keyboard?.inline_keyboard;
-    if (buttons) console.log(`\nButtons: ${buttons.flat().map((b) => `[${b.text}]`).join(' ')}`);
+    if (buttons) console.log(`\n${buttons.map((row) => row.map((b) => `[${b.text}]`).join(' ')).join('\n')}`);
     return { message_id: 0 };
   },
 };

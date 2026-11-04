@@ -7,8 +7,8 @@ import { createFakeD1 } from './fake-d1.js';
 
 const SECRET = 'test-secret';
 
-// Reads the icons back out of a day card, as morning-afternoon-evening-night.
-const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
+// Reads the weather tiles of a card, as morning-afternoon-evening-night.
+const iconsIn = (keyboard) => keyboard.inline_keyboard[1].map((tile) => tile.text).join('-');
 const realFetch = globalThis.fetch;
 const realDate = Date.now;
 
@@ -37,7 +37,7 @@ function forecastResponse() {
 }
 
 beforeEach(() => {
-  env = { DB: createFakeD1(), TELEGRAM_BOT_TOKEN: 'T', WEBHOOK_SECRET: SECRET };
+  env = { DB: createFakeD1(), TELEGRAM_BOT_TOKEN: 'T', WEBHOOK_SECRET: SECRET, ADMIN_USER_ID: '111' };
   sent = [];
   calls = [];
   telegramFails = false;
@@ -100,8 +100,8 @@ test('sharing a location through the webhook saves it in the database and replie
 test('Tomorrow replies with a day card, using the saved location', async () => {
   await post(message(LOCATION));
   await post(message({ text: 'Tomorrow' }));
-  assert.equal(iconsIn(sent[1].text), '☔-🚫-🚫-🚫');
-  assert.match(sent[1].text, /^\*Tomorrow · /);
+  assert.equal(iconsIn(sent[1].reply_markup), '☔-🚫-🚫-🚫');
+  assert.equal(sent[1].text, '☔ · 🚫 · 🚫 · 🚫');
 });
 
 test('a button tap through the webhook updates the logged card in the database', async () => {
@@ -124,12 +124,36 @@ test('the evening card is sent with buttons and logged in the database', async (
   await store.setLocation('111', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   Date.now = () => new Date('2026-11-04T11:30:00Z').getTime(); // 20:30 in Tokyo.
   await runSchedule();
-  assert.deepEqual(sent[0].reply_markup.inline_keyboard.flat().map((b) => b.text), ['👍', '👎']);
+  assert.deepEqual(sent[0].reply_markup.inline_keyboard[2].map((b) => b.text), ['👍', '👎']);
   const [logged] = await store.getSuggestions('111');
   assert.equal(logged.source, 'evening');
   assert.equal(logged.reaction, 'none');
   assert.deepEqual(logged.reasons, ['umbrella']);
   assert.equal(logged.messageId, 1);
+});
+
+test('the test message route sends a card to the admin only', async () => {
+  const store = createD1Store(env.DB);
+  await store.setLocation('111', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  await store.setLocation('222', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  const res = await post('', { path: '/admin/test-message' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(sent.map((m) => m.chat_id), ['111']);
+  assert.equal((await store.getSuggestions('111'))[0].source, 'test');
+  assert.deepEqual(await store.getSuggestions('222'), []);
+});
+
+test('the test message route needs the secret', async () => {
+  await createD1Store(env.DB).setLocation('111', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  assert.equal((await post('', { path: '/admin/test-message', secret: null })).status, 403);
+  assert.equal((await post('', { path: '/admin/test-message', secret: 'wrong-secret' })).status, 403);
+  assert.equal(sent.length, 0);
+});
+
+test('the test message route reports a failure when no admin is set', async () => {
+  delete env.ADMIN_USER_ID;
+  assert.equal((await post('', { path: '/admin/test-message' })).status, 500);
+  assert.equal(sent.length, 0);
 });
 
 test('a wrong or missing secret is rejected and does nothing', async () => {
@@ -174,7 +198,7 @@ test('the schedule sends the evening message once, and saves the checked date', 
 
   await runSchedule();
   await runSchedule();
-  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['☔-🚫-🚫-🚫']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.reply_markup)), ['☔-🚫-🚫-🚫']);
   assert.equal(sent[0].chat_id, '111');
   assert.equal((await store.getLocation('111')).lastCheckedDate, '2026-11-04');
 });

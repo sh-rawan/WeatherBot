@@ -10,7 +10,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "logs": "wrangler tail",
-    "feedback": "wrangler d1 execute weatherbot --remote --file scripts/feedback.sql",
+    "test-message": "node --env-file-if-exists=.env scripts/send-test-card.js",
+    "feedback": "wrangler d1 execute weatherbot --remote --command \"SELECT source, reasons, reaction, COUNT(*) AS cards FROM suggestions GROUP BY source, reasons, reaction ORDER BY source, reasons, reaction\"",
     "set-webhook": "node --env-file-if-exists=.env scripts/set-webhook.js",
     "simulate": "node scripts/simulate.js",
     "test": "node --test"

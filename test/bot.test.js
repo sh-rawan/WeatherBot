@@ -11,8 +11,8 @@ const TODAY_ICONS = '🚫-🚫-🚫-🚫';
 const TOMORROW_ICONS = '☔-🚫-🚫-🚫';
 const HELP = 'ℹ️ Help';
 
-// Reads the icons back out of a day card, as morning-afternoon-evening-night.
-const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
+// Reads the weather tiles of a card, as morning-afternoon-evening-night.
+const iconsIn = (keyboard) => keyboard.inline_keyboard[1].map((tile) => tile.text).join('-');
 
 // Today is dry, and tomorrow morning needs an umbrella.
 const forecast = (timezone = 'Asia/Tokyo') => {
@@ -34,7 +34,7 @@ const forecast = (timezone = 'Asia/Tokyo') => {
 
 const privateChat = { id: CHAT_ID, type: 'private' };
 
-function setup({ fetchForecast = async () => forecast(), store = createMemoryStore() } = {}) {
+function setup({ fetchForecast = async () => forecast(), store = createMemoryStore(), adminId } = {}) {
   const sent = [];
   const buttonNotes = [];
   const keyboardUpdates = [];
@@ -43,7 +43,7 @@ function setup({ fetchForecast = async () => forecast(), store = createMemorySto
     answerButton: async (id, text) => buttonNotes.push({ id, text }),
     setMessageKeyboard: async (to, messageId, keyboard) => keyboardUpdates.push({ to, messageId, keyboard }),
   };
-  const bot = createBot({ messenger, store, fetchForecast, log: { error() {} } });
+  const bot = createBot({ messenger, store, fetchForecast, adminId, log: { error() {} } });
   const send = (fields) => bot.handleUpdate({ update_id: 1, message: { chat: privateChat, ...fields } });
   const say = (text) => send({ text });
   const share = (location = TOKYO) => send({ location });
@@ -87,8 +87,8 @@ test('sharing a location saves it and replies with today, using those coordinate
   await share();
   assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   assert.deepEqual(calls, [[35.68, 139.76]]);
-  assert.match(sent[0].text, /Today · Wed 4 Nov/);
-  assert.match(sent[0].text, /🚫  Night/);
+  assert.ok(sent[0].text.includes('🌅  🚫'));
+  assert.ok(sent[0].text.includes('🌙  🚫'));
   assert.equal(firstButton(sent[0].keyboard).text, 'Today');
 });
 
@@ -140,23 +140,55 @@ test('a location is not saved when the forecast check fails', async () => {
   assert.match(sent[0].text, /couldn't get the forecast/);
 });
 
-test('Today and Tomorrow reply with a dated card for that day', async () => {
+test('Today and Tomorrow reply with an icons-only card for that day', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('Today');
   await say('Tomorrow');
-  assert.equal(sent[1].text, '*Today · Wed 4 Nov*\n\n🚫  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night');
-  assert.equal(sent[2].text, '*Tomorrow · Thu 5 Nov*\n\n☔  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night');
+  assert.equal(sent[1].text, '🚫 · 🚫 · 🚫 · 🚫');
+  assert.equal(iconsIn(sent[1].keyboard), TODAY_ICONS);
+  assert.equal(sent[2].text, '☔ · 🚫 · 🚫 · 🚫');
+  assert.equal(iconsIn(sent[2].keyboard), TOMORROW_ICONS);
 });
 
 const buttonTexts = (keyboard) => keyboard.inline_keyboard.flat().map((b) => b.text);
 
-test('Today and Tomorrow cards have like and dislike buttons', async () => {
+test('a card is a grid of tiles with like and dislike buttons below', async () => {
   const { sent, say, share } = setup();
   await share();
+  await say('Tomorrow');
+  const rows = sent[1].keyboard.inline_keyboard;
+  assert.deepEqual(rows[0].map((b) => b.text), ['🌅', '🌞', '🌇', '🌙']);
+  assert.deepEqual(rows[1].map((b) => b.text), ['☔', '🚫', '🚫', '🚫']);
+  assert.deepEqual(rows[2].map((b) => b.text), ['👍', '👎']);
+  assert.deepEqual(rows[2].map((b) => b.callback_data), ['like', 'dislike']);
+  assert.doesNotMatch(sent[1].text, /[A-Za-z0-9]/);
+});
+
+test('a reaction keeps the tiles and ticks the choice', async () => {
+  const { sent, say, share, bot, keyboardUpdates } = setup();
+  await share();
+  await say('Tomorrow');
+  await bot.handleUpdate({
+    callback_query: {
+      id: 'tap',
+      data: 'like',
+      message: { message_id: 2, chat: privateChat, reply_markup: sent[1].keyboard },
+    },
+  });
+  const rows = keyboardUpdates[0].keyboard.inline_keyboard;
+  assert.deepEqual(rows.slice(0, 2), sent[1].keyboard.inline_keyboard.slice(0, 2));
+  assert.deepEqual(rows[2].map((b) => b.text), ['✅ 👍', '👎']);
+});
+
+test('tapping a tile does nothing but stop the spinner', async () => {
+  const { store, say, share, tap, buttonNotes, keyboardUpdates } = setup();
+  await share();
   await say('Today');
-  assert.deepEqual(buttonTexts(sent[1].keyboard), ['👍', '👎']);
-  assert.deepEqual(sent[1].keyboard.inline_keyboard.flat().map((b) => b.callback_data), ['like', 'dislike']);
+  await tap('tile', 2);
+  assert.equal((await store.getSuggestions(USER))[0].reaction, 'none');
+  assert.deepEqual(buttonNotes, [{ id: 'tap1', text: undefined }]);
+  assert.equal(keyboardUpdates.length, 0);
 });
 
 test('requested cards are logged with no reaction yet', async () => {
@@ -220,7 +252,7 @@ test('a failure to log still leaves the delivered card alone', async () => {
   const { sent, say, share } = setup({ store });
   await share();
   await say('Today');
-  assert.equal(iconsIn(sent[1].text), TODAY_ICONS);
+  assert.equal(iconsIn(sent[1].keyboard), TODAY_ICONS);
 });
 
 test('button taps from group chats are ignored', async () => {
@@ -234,8 +266,8 @@ test('Today and Tomorrow work when typed, regardless of case', async () => {
   await share();
   await say(' tomorrow ');
   await say('TODAY');
-  assert.equal(iconsIn(sent[1].text), TOMORROW_ICONS);
-  assert.equal(iconsIn(sent[2].text), TODAY_ICONS);
+  assert.equal(iconsIn(sent[1].keyboard), TOMORROW_ICONS);
+  assert.equal(iconsIn(sent[2].keyboard), TODAY_ICONS);
 });
 
 test('Today and Tomorrow explain when the forecast fails', async () => {
@@ -265,6 +297,7 @@ test('Help explains the icons, timings, notifications and who to contact', async
   await say(HELP);
   const { text } = sent[0];
   for (const icon of ['☔', '🌦️', '🍃', '🧥', '❄️', '☀️', '🚫']) assert.ok(text.includes(icon), `missing ${icon}`);
+  for (const part of ['🌅', '🌞', '🌇', '🌙']) assert.ok(text.includes(part), `missing ${part}`);
   for (const timing of ['06:00–12:00', '12:00–18:00', '18:00–24:00', '00:00–06:00']) {
     assert.ok(text.includes(timing), `missing ${timing}`);
   }
@@ -292,6 +325,53 @@ test('Help text has balanced bold markers, so Telegram can format it', async () 
   await say(HELP);
   assert.equal(sent[0].text.split('*').length % 2, 1);
   assert.doesNotMatch(sent[0].text, /[_`[]/);
+});
+
+test('the admin gets a test card for today from /test, logged as a test', async () => {
+  const { sent, store, say, share } = setup({ adminId: CHAT_ID });
+  await share();
+  await say('/test');
+  assert.equal(sent[1].to, USER);
+  assert.equal(iconsIn(sent[1].keyboard), TODAY_ICONS);
+  const [logged] = await store.getSuggestions(USER);
+  assert.equal(logged.source, 'test');
+  assert.deepEqual(logged.reasons, ['test']);
+});
+
+test('/test from anyone but the admin does nothing special', async () => {
+  const { sent, store, say, share } = setup({ adminId: 222 });
+  await share();
+  await say('/test');
+  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.deepEqual(await store.getSuggestions(USER), []);
+});
+
+test('/test does nothing when no admin is set', async () => {
+  const { sent, say, share } = setup();
+  await share();
+  await say('/test');
+  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+});
+
+test('/test from an admin with no location asks for one', async () => {
+  const { sent, say } = setup({ adminId: CHAT_ID });
+  await say('/test');
+  assert.match(sent[0].text, /need your location/);
+});
+
+test('sendTestCard only messages the admin, even with other users saved', async () => {
+  const store = createMemoryStore();
+  await store.setLocation('other', SAVED_TOKYO);
+  await store.setLocation('admin', SAVED_TOKYO);
+  const { bot, sent } = setup({ store, adminId: 'admin' });
+  await bot.sendTestCard();
+  assert.deepEqual(sent.map((m) => m.to), ['admin']);
+  assert.deepEqual(await store.getSuggestions('other'), []);
+});
+
+test('sendTestCard fails clearly with no admin or no saved location', async () => {
+  await assert.rejects(setup().bot.sendTestCard(), /No admin is set/);
+  await assert.rejects(setup({ adminId: 'admin' }).bot.sendTestCard(), /no saved location/);
 });
 
 test('inherited object keys are not treated as commands', async () => {
@@ -343,7 +423,7 @@ test('users are saved under a text ID, though Telegram sends a number', async ()
   assert.equal(await store.getLocation(CHAT_ID), undefined);
   const { sent, say } = setup({ store });
   await say('today');
-  assert.equal(iconsIn(sent[0].text), TODAY_ICONS);
+  assert.equal(iconsIn(sent[0].keyboard), TODAY_ICONS);
 });
 
 test('unknown update types are ignored', async () => {
