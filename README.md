@@ -4,6 +4,10 @@ A Telegram bot that asks for your location and tells you how your day looks, foc
 
 Requires Node 22.9 or newer. There are no dependencies to install.
 
+## Buttons only
+
+Users control the bot with buttons, not by typing. The buttons stay on screen in place of the phone's keyboard, and a typed message only gets pointed back to them. Telegram doesn't let a bot remove the text box, so someone can still reach it through the keyboard icon. A typed message that exactly matches a button's text counts as tapping it, because Telegram sends them the same way.
+
 ## Daily notifications
 
 Every evening from 20:00 local time, the bot checks tomorrow's forecast for each user. If it's worth a message, it sends a small icons-only card. The message text holds the weather icons on one line, in the order morning, afternoon, evening, night, because phone notifications only show text. Below it is a grid of Telegram button tiles, with a picture for each part of the day above its weather icons, then 👍 and 👎:
@@ -73,7 +77,7 @@ This runs the real bot logic against live forecasts in your terminal:
 
 ```
 you> loc 35.68 139.76
-you> tomorrow
+you> Tomorrow
 ```
 
 ## Run the tests

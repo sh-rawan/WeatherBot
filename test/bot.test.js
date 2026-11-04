@@ -69,13 +69,13 @@ test('/start from someone with a saved location shows the menu', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('/start');
-  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.match(sent[1].text, /Tap a button below/);
 });
 
 test('asking for weather before sharing a location asks for it', async () => {
   const { sent, say } = setup();
   await say('today');
-  assert.match(sent[0].text, /need your location/);
+  assert.match(sent[0].text, /Share your location/);
 });
 
 test('sharing a location saves it and replies with today, using those coordinates', async () => {
@@ -263,13 +263,36 @@ test('button taps from group chats are ignored', async () => {
   assert.equal(buttonNotes.length, 0);
 });
 
-test('Today and Tomorrow work when typed, regardless of case', async () => {
+for (const typed of ['tomorrow', ' Today ', 'TODAY', 'help', '/help', 'stop', 'what is the weather']) {
+  test(`typing "${typed}" only points back to the buttons`, async () => {
+    const { sent, store, say, share } = setup();
+    await share();
+    await say(typed);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].text, '👇 Tap a button below.');
+    assert.equal(firstButton(sent[1].keyboard).text, 'Today');
+    assert.deepEqual(await store.getSuggestions(USER), []);
+    assert.equal((await store.getLocation(USER)).notificationsOffAt, undefined);
+  });
+}
+
+test('typing before sharing a location points to the location button', async () => {
+  const { sent, say } = setup();
+  await say('hello');
+  assert.equal(sent[0].text, '👇 Share your location to start.');
+  assert.equal(firstButton(sent[0].keyboard).request_location, true);
+});
+
+test('both button sets stay on screen, with a hint in place of typing', async () => {
   const { sent, say, share } = setup();
+  await say('/start');
   await share();
-  await say(' tomorrow ');
-  await say('TODAY');
-  assert.equal(iconsIn(sent[1].keyboard), TOMORROW_ICONS);
-  assert.equal(iconsIn(sent[2].keyboard), TODAY_ICONS);
+  for (const { keyboard } of sent) {
+    assert.equal(keyboard.is_persistent, true);
+    assert.equal(keyboard.resize_keyboard, true);
+    assert.equal(keyboard.input_field_placeholder, 'Tap a button below');
+    assert.equal(keyboard.one_time_keyboard, undefined);
+  }
 });
 
 test('Today and Tomorrow explain when the forecast fails', async () => {
@@ -308,16 +331,16 @@ test('Help explains the icons, timings, notifications and who to contact', async
   assert.match(text, /below 5°C/);
   assert.match(text, /Sweaty hot, or sunny/);
   assert.match(text, /20:00 your local time/);
-  assert.match(text, /Contact Shrawan/);
+  assert.match(text, /Contact Shrawan: @shra1agl/);
 });
 
 test('Help works before a location is shared, and keeps the right keyboard', async () => {
   const { sent, say, share } = setup();
-  await say('help');
+  await say(HELP);
   assert.match(sent[0].text, /What the icons mean/);
   assert.equal(firstButton(sent[0].keyboard).request_location, true);
   await share();
-  await say('/help');
+  await say(HELP);
   assert.match(sent[2].text, /What the icons mean/);
   assert.equal(firstButton(sent[2].keyboard).text, 'Today');
 });
@@ -344,7 +367,7 @@ test('/test from anyone but the admin does nothing special', async () => {
   const { sent, store, say, share } = setup({ adminId: 222 });
   await share();
   await say('/test');
-  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.match(sent[1].text, /Tap a button below/);
   assert.deepEqual(await store.getSuggestions(USER), []);
 });
 
@@ -352,13 +375,13 @@ test('/test does nothing when no admin is set', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('/test');
-  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.match(sent[1].text, /Tap a button below/);
 });
 
 test('/test from an admin with no location asks for one', async () => {
   const { sent, say } = setup({ adminId: CHAT_ID });
   await say('/test');
-  assert.match(sent[0].text, /need your location/);
+  assert.match(sent[0].text, /Share your location/);
 });
 
 test('sendTestCard only messages the admin, even with other users saved', async () => {
@@ -442,7 +465,7 @@ test('moving location with notifications off keeps them off and says so', async 
 test('tapping stop before sharing a location asks for one', async () => {
   const { sent, say } = setup();
   await say(STOP);
-  assert.match(sent[0].text, /need your location/);
+  assert.match(sent[0].text, /Share your location/);
 });
 
 test('Help explains how to stop notifications', async () => {
@@ -455,7 +478,7 @@ test('inherited object keys are not treated as commands', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('constructor');
-  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.match(sent[1].text, /Tap a button below/);
 });
 
 test('a location button that arrives as text explains that a phone is needed', async () => {
@@ -473,7 +496,7 @@ test('messages without text, such as photos, get the menu rather than a crash', 
   const { sent, send, share } = setup();
   await share();
   await send({ photo: [] });
-  assert.match(sent[1].text, /Choose Today or Tomorrow/);
+  assert.match(sent[1].text, /Tap a button below/);
 });
 
 test('group chats are ignored', async () => {
@@ -499,7 +522,7 @@ test('users are saved under a text ID, though Telegram sends a number', async ()
   assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   assert.equal(await store.getLocation(CHAT_ID), undefined);
   const { sent, say } = setup({ store });
-  await say('today');
+  await say('Today');
   assert.equal(iconsIn(sent[0].keyboard), TODAY_ICONS);
 });
 

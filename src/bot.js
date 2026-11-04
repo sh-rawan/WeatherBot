@@ -8,6 +8,7 @@ const UPDATE_LABEL = '📍 Update location';
 const HELP_LABEL = 'ℹ️ Help';
 const STOP_LABEL = '🔕 Stop notifications';
 const RESUME_LABEL = '🔔 Turn on notifications';
+const USE_BUTTONS = '👇 Tap a button below.';
 const FORECAST_ERROR = "Sorry, I couldn't get the forecast just now. Please try again in a minute.";
 const NOT_COVERED = 'Sorry, I only cover Japan, Malaysia and India for now, and that location looks like it is somewhere else.';
 const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters. Tap ${HELP_LABEL} to see what the icons mean.`;
@@ -44,14 +45,18 @@ Tap 🔕 to stop these messages, and 🔔 to turn them back on.
 
 *More details*
 
-Contact Shrawan.`;
+Contact Shrawan: @shra1agl`;
 
 const locationButton = (text) => ({ text, request_location: true });
 const HELP_ROW = [{ text: HELP_LABEL }];
 
+// Keeps the buttons on screen in place of the phone's keyboard. Telegram doesn't let a
+// bot remove the text box, so typed messages just get pointed back to the buttons.
+const BUTTONS_ONLY = { resize_keyboard: true, is_persistent: true, input_field_placeholder: 'Tap a button below' };
+
 const ASK_LOCATION_KEYBOARD = {
   keyboard: [[locationButton(SHARE_LABEL)], HELP_ROW],
-  resize_keyboard: true,
+  ...BUTTONS_ONLY,
 };
 
 const mainKeyboard = (user) => ({
@@ -61,12 +66,13 @@ const mainKeyboard = (user) => ({
     [{ text: user.notificationsOffAt ? RESUME_LABEL : STOP_LABEL }],
     HELP_ROW,
   ],
-  resize_keyboard: true,
+  ...BUTTONS_ONLY,
 });
 
+// Keyed by the exact text each button sends.
 const DAYS = {
-  today: { offset: 0, source: 'today', reasons: ['requested'] },
-  tomorrow: { offset: 1, source: 'tomorrow', reasons: ['requested'] },
+  Today: { offset: 0, source: 'today', reasons: ['requested'] },
+  Tomorrow: { offset: 1, source: 'tomorrow', reasons: ['requested'] },
 };
 
 // Tagged in the log, so test cards can be left out of any analysis.
@@ -75,8 +81,8 @@ const TEST_DAY = { offset: 0, source: 'test', reasons: ['test'] };
 const cardFor = (forecast, { offset }) => dayCard(getDay(forecast, offset));
 
 export function createBot({ messenger, store, fetchForecast, adminId, log = console }) {
-  const askForLocation = (userId, intro) =>
-    messenger.sendText(userId, `${intro} Tap the button below to share your location.`, ASK_LOCATION_KEYBOARD);
+  const askForLocation = (userId, text) =>
+    messenger.sendText(userId, text, ASK_LOCATION_KEYBOARD);
 
   const keyboardFor = async (userId) => {
     const user = await store.getLocation(userId);
@@ -91,7 +97,7 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
         await store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
         const { notificationsOffAt } = await store.getLocation(userId);
         const note = notificationsOffAt ? NOTIFICATIONS_OFF_NOTE : NOTIFICATION_INTRO;
-        text = `📍 *Location saved*\n\n${cardFor(forecast, DAYS.today)}\n\n${note}`;
+        text = `📍 *Location saved*\n\n${cardFor(forecast, DAYS.Today)}\n\n${note}`;
       } else {
         text = NOT_COVERED;
       }
@@ -150,10 +156,10 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
       return;
     }
 
-    const rawText = (message.text ?? '').trim();
-    const text = rawText.toLowerCase();
+    // Only the exact text sent by a button counts, plus /start from Telegram's Start button.
+    const rawText = message.text ?? '';
 
-    if (rawText === HELP_LABEL || text === 'help' || text === '/help') {
+    if (rawText === HELP_LABEL) {
       await messenger.sendText(userId, HELP_TEXT, await keyboardFor(userId));
       return;
     }
@@ -172,8 +178,8 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
     if (!user) {
       const intro =
         rawText === '/start'
-          ? "Hi! I'll tell you how your day looks, starting with rain. ☔ I cover Japan, Malaysia and India."
-          : 'I need your location before I can check the weather.';
+          ? "Hi! I'll tell you how your day looks, starting with rain. ☔ I cover Japan, Malaysia and India. Tap the button below to share your location."
+          : '👇 Share your location to start.';
       await askForLocation(userId, intro);
       return;
     }
@@ -188,17 +194,17 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
       return;
     }
 
-    if (text === '/test' && adminId && userId === String(adminId)) {
+    if (rawText === '/test' && adminId && userId === String(adminId)) {
       await sendDay(userId, TEST_DAY);
       return;
     }
 
-    if (Object.hasOwn(DAYS, text)) {
-      await sendDay(userId, DAYS[text]);
+    if (Object.hasOwn(DAYS, rawText)) {
+      await sendDay(userId, DAYS[rawText]);
       return;
     }
 
-    await messenger.sendText(userId, 'Choose Today or Tomorrow to see how the day looks.', mainKeyboard(user));
+    await messenger.sendText(userId, USE_BUTTONS, mainKeyboard(user));
   }
 
   return {

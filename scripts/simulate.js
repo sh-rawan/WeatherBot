@@ -24,7 +24,7 @@ const parseLocation = (line) => {
 const send = (fields) => bot.handleUpdate({ message: { chat, ...fields } });
 
 console.log('Telegram simulator. Type "loc <lat> <lon>" to share a location (e.g. loc 35.68 139.76 for Tokyo),');
-console.log('any other text to send a message (today, tomorrow), or "exit" to quit.');
+console.log('a button\'s exact text to tap it (Today, Tomorrow), or "exit" to quit. Anything else counts as typing.');
 
 await send({ text: '/start' });
 
