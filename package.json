@@ -1,0 +1,13 @@
+{
+  "name": "weatherbot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Telegram bot that tells you what your day looks like, starting with rain.",
+  "type": "module",
+  "engines": { "node": ">=22.9" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "simulate": "node scripts/simulate.js",
+    "test": "node --test"
+  }
+}
