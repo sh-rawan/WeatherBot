@@ -17,10 +17,20 @@ export async function fetchForecast(lat, lon) {
 }
 
 /**
- * Open-Meteo resolves the timezone from the coordinates. Asia/Tokyo covers all of
- * Japan including remote islands, and excludes close neighbours such as Busan.
+ * Open-Meteo resolves the timezone from the coordinates. These timezones cover each
+ * country including remote islands, and exclude close neighbours such as Busan or
+ * Singapore. Japan: Tokyo. Malaysia: Kuala Lumpur, Kuching. India: Kolkata, or its
+ * older name Calcutta.
  */
-export const isInJapan = (forecast) => forecast.timezone === 'Asia/Tokyo';
+const COVERED_TIMEZONES = new Set([
+  'Asia/Tokyo',
+  'Asia/Kuala_Lumpur',
+  'Asia/Kuching',
+  'Asia/Kolkata',
+  'Asia/Calcutta',
+]);
+
+export const isCoveredLocation = (forecast) => COVERED_TIMEZONES.has(forecast.timezone);
 
 /**
  * Picks one local calendar day (0 = today, 1 = tomorrow, -1 = yesterday) as 24 hourly slots,

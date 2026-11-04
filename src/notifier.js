@@ -3,15 +3,22 @@ import { getDay } from './weather.js';
 
 export const NOTIFY_HOUR = 20;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-const JAPAN_UTC_OFFSET_MS = 9 * 60 * 60 * 1000; // Japan has no daylight saving time.
 const NORMAL_WEATHER_DAYS = 7;
 
 // Very cold clothes also cover a merely cold day, but not the other way round.
 const COVERED_BY = { cold: ['cold', 'veryCold'], veryCold: ['veryCold'], hot: ['hot'] };
 
-function japanTime(nowMs) {
-  const iso = new Date(nowMs + JAPAN_UTC_OFFSET_MS).toISOString();
-  return { date: iso.slice(0, 10), hour: Number(iso.slice(11, 13)) };
+function localTime(nowMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(nowMs);
+  const part = (type) => parts.find((p) => p.type === type).value;
+  return { date: `${part('year')}-${part('month')}-${part('day')}`, hour: Number(part('hour')) };
 }
 
 /**
@@ -32,11 +39,9 @@ export function shouldSend(outlook, recentOutlooks) {
  */
 export function createNotifier({ messenger, store, fetchForecast, keyboard, now = Date.now, log = console }) {
   async function checkAll() {
-    const { date, hour } = japanTime(now());
-    if (hour < NOTIFY_HOUR) return;
-
     for (const [userId, user] of store.getUsers()) {
-      if (user.lastCheckedDate === date) continue;
+      const { date, hour } = localTime(now(), user.timezone);
+      if (hour < NOTIFY_HOUR || user.lastCheckedDate === date) continue;
       try {
         const forecast = await fetchForecast(user.lat, user.lon);
         const outlook = dayOutlook(getDay(forecast, 1));

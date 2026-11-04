@@ -1,11 +1,11 @@
 import { NOTIFY_HOUR } from './notifier.js';
 import { summarizeDay } from './summary.js';
-import { getDay, isInJapan } from './weather.js';
+import { getDay, isCoveredLocation } from './weather.js';
 
 const SHARE_LABEL = '📍 Share my location';
 const UPDATE_LABEL = '📍 Update location';
 const FORECAST_ERROR = "Sorry, I couldn't get the forecast just now. Please try again in a minute.";
-const OUTSIDE_JAPAN = 'Sorry, I only cover Japan for now, and that location looks like it is outside Japan.';
+const NOT_COVERED = 'Sorry, I only cover Japan, Malaysia and India for now, and that location looks like it is somewhere else.';
 const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters.
 ☔-🧣-🚫-🧣 means morning - afternoon - evening - night.
 ☔ umbrella, 🧣 cold, 🧥 very cold, ☀️ hot and sunny, 🚫 nothing needed.`;
@@ -37,11 +37,11 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     let text;
     try {
       const forecast = await fetchForecast(lat, lon);
-      if (isInJapan(forecast)) {
+      if (isCoveredLocation(forecast)) {
         text = `${summarizeDay(getDay(forecast, DAYS.today.offset), DAYS.today.label)}\n\n${NOTIFICATION_INTRO}`;
-        store.setLocation(userId, { lat, lon });
+        store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
       } else {
-        text = OUTSIDE_JAPAN;
+        text = NOT_COVERED;
       }
     } catch (err) {
       log.error('Forecast failed:', err.message);
@@ -84,7 +84,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     if (!store.getLocation(userId)) {
       const intro =
         rawText === '/start'
-          ? "Hi! I'll tell you how your day looks in Japan, starting with rain. ☔"
+          ? "Hi! I'll tell you how your day looks, starting with rain. ☔ I cover Japan, Malaysia and India."
           : 'I need your location before I can check the weather.';
       await askForLocation(userId, intro);
       return;

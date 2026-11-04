@@ -9,7 +9,7 @@ import { createStore } from '../src/store.js';
 const CHAT_ID = 111;
 const USER = String(CHAT_ID);
 const TOKYO = { latitude: 35.68, longitude: 139.76 };
-const SAVED_TOKYO = { lat: 35.68, lon: 139.76 };
+const SAVED_TOKYO = { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' };
 
 const forecast = (timezone = 'Asia/Tokyo') => {
   const size = 72;
@@ -82,22 +82,33 @@ test('sharing a location explains the notifications and icons', async () => {
   assert.match(sent[0].text, /morning - afternoon - evening - night/);
 });
 
-test('a location outside Japan is declined and not saved', async () => {
-  const { sent, store, share } = setup({ fetchForecast: async () => forecast('Asia/Seoul') });
-  await share();
-  assert.equal(store.getLocation(USER), undefined);
-  assert.match(sent[0].text, /only cover Japan/);
-  assert.equal(firstButton(sent[0].keyboard).request_location, true);
-});
+for (const timezone of ['Asia/Tokyo', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia/Kolkata', 'Asia/Calcutta']) {
+  test(`a location in ${timezone} is accepted and saved with its timezone`, async () => {
+    const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
+    await share();
+    assert.equal(store.getLocation(USER).timezone, timezone);
+    assert.match(sent[0].text, /Today, Wed 4 Nov/);
+  });
+}
 
-test('a location outside Japan keeps the previously saved one', async () => {
+for (const timezone of ['Asia/Seoul', 'Asia/Singapore', 'Asia/Brunei', 'Asia/Colombo', 'Asia/Dhaka', 'Asia/Karachi']) {
+  test(`a location in ${timezone} is declined and not saved`, async () => {
+    const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
+    await share();
+    assert.equal(store.getLocation(USER), undefined);
+    assert.match(sent[0].text, /only cover Japan, Malaysia and India/);
+    assert.equal(firstButton(sent[0].keyboard).request_location, true);
+  });
+}
+
+test('a location outside the covered countries keeps the previously saved one', async () => {
   let timezone = 'Asia/Tokyo';
   const { sent, store, share } = setup({ fetchForecast: async () => forecast(timezone) });
   await share();
   timezone = 'Asia/Taipei';
   await share({ latitude: 25.03, longitude: 121.57 });
   assert.deepEqual(store.getLocation(USER), SAVED_TOKYO);
-  assert.match(sent[1].text, /only cover Japan/);
+  assert.match(sent[1].text, /only cover Japan, Malaysia and India/);
   assert.equal(firstButton(sent[1].keyboard).text, 'Today');
 });
 

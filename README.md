@@ -1,12 +1,12 @@
 # WeatherBot
 
-A Telegram bot that asks for your location and tells you how your day looks, focusing on rain for now. It only covers Japan and declines locations elsewhere. Forecasts come from [Open-Meteo](https://open-meteo.com/), which needs no API key for non-commercial use.
+A Telegram bot that asks for your location and tells you how your day looks, focusing on rain for now. It covers Japan, Malaysia and India, and declines locations elsewhere. Forecasts come from [Open-Meteo](https://open-meteo.com/), which needs no API key for non-commercial use.
 
 Requires Node 22.9 or newer. There are no dependencies to install.
 
 ## Daily notifications
 
-Every evening from 20:00 Japan time, the bot checks tomorrow's forecast for each user. If it's worth a message, it sends one icon slot per part of the day:
+Every evening from 20:00 local time, the bot checks tomorrow's forecast for each user. If it's worth a message, it sends one icon slot per part of the day:
 
 ```
 ☔-🧣-🚫-🧣

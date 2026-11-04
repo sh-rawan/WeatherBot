@@ -35,7 +35,7 @@ const forecast = ({ rainy = true, tempC = 15, recentTempC = 15 } = {}) => {
 function setup({ time = '2026-11-04T20:00:00+09:00', fetchForecast = async () => forecast(), users = ['u1'] } = {}) {
   const sent = [];
   const store = createStore();
-  for (const id of users) store.setLocation(id, { lat: 35.68, lon: 139.76 });
+  for (const id of users) store.setLocation(id, { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   const state = { time };
   const notifier = createNotifier({
     messenger: { sendText: async (to, text, keyboard) => sent.push({ to, text, keyboard }) },
@@ -100,6 +100,41 @@ test('Japan time is used whatever the server clock zone: 20:00 JST is 11:00 UTC'
   const { notifier, sent } = setup({ time: '2026-11-04T11:00:00Z' });
   await notifier.checkAll();
   assert.equal(sent.length, 1);
+});
+
+test('each user is checked at 20:00 in their own timezone', async () => {
+  const { notifier, sent, store, state } = setup({ users: [] });
+  store.setLocation('tokyo', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  store.setLocation('kl', { lat: 3.14, lon: 101.69, timezone: 'Asia/Kuala_Lumpur' });
+  store.setLocation('delhi', { lat: 28.61, lon: 77.21, timezone: 'Asia/Kolkata' });
+
+  const checkAt = async (time) => {
+    state.time = time;
+    await notifier.checkAll();
+    return sent.map((m) => m.to);
+  };
+
+  assert.deepEqual(await checkAt('2026-11-04T10:59:00Z'), []);
+  assert.deepEqual(await checkAt('2026-11-04T11:00:00Z'), ['tokyo']); // 20:00 in Tokyo.
+  assert.deepEqual(await checkAt('2026-11-04T11:59:00Z'), ['tokyo']);
+  assert.deepEqual(await checkAt('2026-11-04T12:00:00Z'), ['tokyo', 'kl']); // 20:00 in Kuala Lumpur.
+  assert.deepEqual(await checkAt('2026-11-04T14:29:00Z'), ['tokyo', 'kl']);
+  assert.deepEqual(await checkAt('2026-11-04T14:30:00Z'), ['tokyo', 'kl', 'delhi']); // 20:00 in India.
+});
+
+test('a user past local midnight waits for their next evening', async () => {
+  const { notifier, sent, store, state } = setup({ users: [] });
+  store.setLocation('delhi', { lat: 28.61, lon: 77.21, timezone: 'Asia/Kolkata' });
+  state.time = '2026-11-04T18:30:00Z'; // 00:00 on Nov 5 in India.
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
+});
+
+test('midnight local time counts as hour 0, not 24', async () => {
+  const { notifier, sent, state } = setup();
+  state.time = '2026-11-04T15:00:00Z'; // 00:00 on Nov 5 in Tokyo.
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
 });
 
 test('rain sends every evening of a long rainy spell, but only once per evening', async () => {
@@ -181,7 +216,7 @@ test('a failed forecast is retried on the next check', async () => {
 
 test('a failed send is retried and not recorded as checked', async () => {
   const store = createStore();
-  store.setLocation('u1', { lat: 35.68, lon: 139.76 });
+  store.setLocation('u1', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   let fail = true;
   const delivered = [];
   const notifier = createNotifier({
@@ -220,7 +255,7 @@ test('one user failing does not stop the others', async () => {
 test('moving location gets checked again tonight', async () => {
   const { notifier, sent, store } = setup();
   await notifier.checkAll();
-  store.setLocation('u1', { lat: 43.06, lon: 141.35 });
+  store.setLocation('u1', { lat: 43.06, lon: 141.35, timezone: 'Asia/Tokyo' });
   await notifier.checkAll();
   assert.equal(sent.length, 2);
 });
