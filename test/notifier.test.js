@@ -4,12 +4,15 @@ import { createNotifier, shouldSend, temperatureChangeStarts } from '../src/noti
 import { createMemoryStore } from '../src/store.js';
 
 const KEYBOARD = { Buttons: [] };
+
+// Reads the icons back out of a day card, as morning-afternoon-evening-night.
+const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
 const PAST_DAYS = 7;
 const TODAY_START = PAST_DAYS * 24;
 const TOMORROW_START = TODAY_START + 24;
 
 // `recentTempC` covers the past week and today. `tempC` covers tomorrow onwards.
-const forecast = ({ rainy = true, lightRain = false, tempC = 20, recentTempC = 20 } = {}) => {
+const forecast = ({ rainy = true, lightRain = false, tempC = 25, recentTempC = 25 } = {}) => {
   const size = (PAST_DAYS + 3) * 24;
   const probability = Array(size).fill(0);
   const precipitation = Array(size).fill(0);
@@ -42,7 +45,9 @@ function setup({ time = '2026-11-04T20:00:00+09:00', fetchForecast = async () =>
   for (const id of users) store.setLocation(id, { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
   const state = { time };
   const notifier = createNotifier({
-    messenger: { sendText: async (to, text, keyboard) => sent.push({ to, text, keyboard }) },
+    messenger: {
+      sendText: async (to, text, keyboard) => ({ message_id: sent.push({ to, text, keyboard }) }),
+    },
     store,
     fetchForecast,
     keyboard: KEYBOARD,
@@ -58,6 +63,39 @@ test('needing an umbrella always sends, even when the cold is already normal', (
   assert.equal(shouldSend({ umbrella: true, weather: ['cold'] }, [outlookWith('cold')]), true);
 });
 
+test('a sent card is logged with its reasons and weather, with no reaction yet', async () => {
+  const { notifier, store } = setup();
+  await notifier.checkAll();
+  const [logged, ...others] = await store.getSuggestions('u1');
+  assert.equal(others.length, 0);
+  assert.equal(logged.messageId, 1);
+  assert.equal(logged.source, 'evening');
+  assert.equal(logged.reaction, 'none');
+  assert.deepEqual(logged.reasons, ['umbrella']);
+  assert.equal(logged.icons, '☔-🚫-🚫-🚫');
+  assert.equal(logged.forecastDate, '2026-11-05');
+  assert.equal(logged.timezone, 'Asia/Tokyo');
+  assert.equal(logged.sentAt, '2026-11-04T11:00:00.000Z');
+  assert.equal(logged.snapshot.changeC, 0);
+  assert.deepEqual(logged.snapshot.parts.map((p) => p.name), ['Morning', 'Afternoon', 'Evening', 'Night']);
+  assert.equal(logged.snapshot.parts[0].rainMm, 3);
+  assert.equal(logged.snapshot.parts[0].rainChance, 80);
+  assert.equal(logged.snapshot.parts[0].coldestC, 25);
+});
+
+test('each reason that applies is logged', async () => {
+  const { notifier, store } = setup({ fetchForecast: async () => forecast({ tempC: 5 }) });
+  await notifier.checkAll();
+  assert.deepEqual((await store.getSuggestions('u1'))[0].reasons, ['umbrella', 'temperature', 'clothes']);
+});
+
+test('a day with no message logs no card, but is still marked as checked', async () => {
+  const { notifier, store } = setup({ fetchForecast: async () => forecast({ rainy: false }) });
+  await notifier.checkAll();
+  assert.deepEqual(await store.getSuggestions('u1'), []);
+  assert.equal((await store.getLocation('u1')).lastCheckedDate, '2026-11-04');
+});
+
 test('light rain alone sends nothing', async () => {
   const { notifier, sent } = setup({ fetchForecast: async () => forecast({ lightRain: true }) });
   await notifier.checkAll();
@@ -69,7 +107,7 @@ test('light rain still shows its icon when something else sends a message', asyn
     fetchForecast: async () => forecast({ lightRain: true, tempC: 5 }),
   });
   await notifier.checkAll();
-  assert.equal(sent[0].text, '🌦️🧥-🧥-🧥-🧥');
+  assert.equal(iconsIn(sent[0].text), '🌦️🧥-🧥-🧥-🧥');
 });
 
 test('cold or hot that did not happen recently sends', () => {
@@ -98,31 +136,29 @@ test('a temperature change sends even when the clothes are already normal', () =
   assert.equal(shouldSend(outlookWith('cold'), [outlookWith('cold')], true), true);
 });
 
-// Daily averages: 7 days before today, then today, then tomorrow.
-const week = (tempC) => Array(7).fill(tempC);
-
-test('a change of 4°C from the past week counts, in either direction', () => {
-  assert.equal(temperatureChangeStarts([...week(12), 12, 8]), true);
-  assert.equal(temperatureChangeStarts([...week(12), 12, 16]), true);
+// Daily averages: yesterday, today, tomorrow.
+test('a change of 4°C from today counts, in either direction', () => {
+  assert.equal(temperatureChangeStarts([12, 12, 8]), true);
+  assert.equal(temperatureChangeStarts([12, 12, 16]), true);
 });
 
 test('a change of under 4°C does not count', () => {
-  assert.equal(temperatureChangeStarts([...week(12), 12, 8.1]), false);
-  assert.equal(temperatureChangeStarts([...week(12), 12, 15.9]), false);
-  assert.equal(temperatureChangeStarts([...week(12), 12, 12]), false);
+  assert.equal(temperatureChangeStarts([12, 12, 8.1]), false);
+  assert.equal(temperatureChangeStarts([12, 12, 15.9]), false);
+  assert.equal(temperatureChangeStarts([12, 12, 12]), false);
 });
 
-test('a change that began today does not send again tomorrow', () => {
-  assert.equal(temperatureChangeStarts([...week(20), 15, 15]), false);
+test('a fall continuing from today does not send again', () => {
+  assert.equal(temperatureChangeStarts([20, 15, 10]), false);
+});
+
+test('a small change today does not stop a big change tomorrow', () => {
+  assert.equal(temperatureChangeStarts([18, 15, 10]), true);
 });
 
 test('a change that reverses direction counts as a new change', () => {
-  assert.equal(temperatureChangeStarts([...week(20), 15, 25]), true);
-});
-
-test('the average compares against the week, not just today', () => {
-  // One odd warm day followed by a return to normal is not a change.
-  assert.equal(temperatureChangeStarts([...week(12), 20, 12]), false);
+  assert.equal(temperatureChangeStarts([20, 15, 25]), true);
+  assert.equal(temperatureChangeStarts([12, 20, 12]), true);
 });
 
 test('a real forecast with a 4°C drop sends, even with the same icons all week', async () => {
@@ -130,7 +166,7 @@ test('a real forecast with a 4°C drop sends, even with the same icons all week'
     fetchForecast: async () => forecast({ rainy: false, recentTempC: 12, tempC: 8 }),
   });
   await notifier.checkAll();
-  assert.deepEqual(sent.map((m) => m.text), ['🧥-🧥-🧥-🧥']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['🧥-🧥-🧥-🧥']);
 });
 
 test('a real forecast with a smaller drop and the same icons stays quiet', async () => {
@@ -146,12 +182,13 @@ test('a real forecast with a 4°C rise sends', async () => {
     fetchForecast: async () => forecast({ rainy: false, recentTempC: 16, tempC: 20 }),
   });
   await notifier.checkAll();
-  assert.deepEqual(sent.map((m) => m.text), ['🚫-🚫-🚫-🚫']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['🍃-🍃-🍃-🍃']);
 });
 
 test('a real forecast does not repeat a change that began today', async () => {
-  const data = forecast({ rainy: false, recentTempC: 20, tempC: 15 });
-  for (let i = TODAY_START; i < TOMORROW_START; i++) data.hourly.temperature_2m[i] = 15;
+  const data = forecast({ rainy: false, recentTempC: 12, tempC: 8 });
+  for (let i = TODAY_START; i < TOMORROW_START; i++) data.hourly.temperature_2m[i] = 8 + 4;
+  for (let i = TODAY_START - 24; i < TODAY_START; i++) data.hourly.temperature_2m[i] = 16;
   const { notifier, sent } = setup({ fetchForecast: async () => data });
   await notifier.checkAll();
   assert.equal(sent.length, 0);
@@ -171,10 +208,16 @@ test('nothing is checked before 20:00 Japan time', async () => {
   assert.equal(sent.length, 0);
 });
 
-test('at 20:00 Japan time, a rainy tomorrow sends only the four icons', async () => {
+test('at 20:00 Japan time, a rainy tomorrow sends a day card', async () => {
   const { notifier, sent } = setup();
   await notifier.checkAll();
-  assert.deepEqual(sent, [{ to: 'u1', text: '☔-🚫-🚫-🚫', keyboard: KEYBOARD }]);
+  assert.deepEqual(sent, [
+    {
+      to: 'u1',
+      text: '*Tomorrow · Thu 5 Nov*\n\n☔  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night',
+      keyboard: KEYBOARD,
+    },
+  ]);
 });
 
 test('Japan time is used whatever the server clock zone: 20:00 JST is 11:00 UTC', async () => {
@@ -254,7 +297,7 @@ test('the first cold day after a mild week sends a message', async () => {
   const { notifier, sent } = setup({ fetchForecast: async () => forecast({ rainy: false, tempC: 5 }) });
   await notifier.checkAll();
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].text, '🧥-🧥-🧥-🧥');
+  assert.equal(iconsIn(sent[0].text), '🧥-🧥-🧥-🧥');
 });
 
 test('another cold day in a cold week sends nothing', async () => {
@@ -306,6 +349,7 @@ test('a failed send is retried and not recorded as checked', async () => {
       sendText: async (to, text) => {
         if (fail) throw new Error('send down');
         delivered.push(text);
+        return { message_id: delivered.length };
       },
     },
     store,

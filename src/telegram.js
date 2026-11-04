@@ -21,7 +21,7 @@ export function createTelegramClient({ token }) {
       call('setWebhook', {
         url,
         secret_token: secretToken,
-        allowed_updates: ['message', 'my_chat_member'],
+        allowed_updates: ['message', 'my_chat_member', 'callback_query'],
       }),
     sendText: (chatId, text, keyboard) =>
       call('sendMessage', {
@@ -30,5 +30,15 @@ export function createTelegramClient({ token }) {
         parse_mode: 'Markdown',
         ...(keyboard && { reply_markup: keyboard }),
       }),
+    /** Stops the loading spinner on a tapped button, and shows a brief note. */
+    answerButton: (callbackId, text) => call('answerCallbackQuery', { callback_query_id: callbackId, text }),
+    async setMessageKeyboard(chatId, messageId, keyboard) {
+      try {
+        await call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: keyboard });
+      } catch (err) {
+        // Tapping the same button twice changes nothing, which Telegram reports as an error.
+        if (!err.message.includes('message is not modified')) throw err;
+      }
+    },
   };
 }

@@ -25,6 +25,13 @@ test('getDay reads rain from the following timestamp, which reports the precedin
   assert.equal(getDay({ hourly }, 1).date, '2026-11-05');
 });
 
+test('feels-like temperature is read for the same hour, and falls back to the real one', () => {
+  const hourly = hourlyData(72, 4);
+  assert.equal(getDay({ hourly }, 0).hours[14].feelsC, 14);
+  hourly.apparent_temperature = hourly.temperature_2m.map((t) => t + 5);
+  assert.equal(getDay({ hourly }, 0).hours[14].feelsC, 19);
+});
+
 test('nextNight holds 00:00 to 06:00 of the following date', () => {
   const hourly = hourlyData(72, 4);
   hourly.precipitation[24 + 3] = 4; // Timestamp 03:00 tomorrow means rain from 02:00 to 03:00.

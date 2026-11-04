@@ -9,7 +9,9 @@ const chat = { id: 1, type: 'private' };
 const messenger = {
   async sendText(_chatId, text, keyboard) {
     console.log(`\n${text}`);
-    if (keyboard) console.log(`\nButtons: ${keyboard.keyboard.flat().map((b) => `[${b.text}]`).join(' ')}`);
+    const buttons = keyboard?.keyboard ?? keyboard?.inline_keyboard;
+    if (buttons) console.log(`\nButtons: ${buttons.flat().map((b) => `[${b.text}]`).join(' ')}`);
+    return { message_id: 0 };
   },
 };
 const bot = createBot({ messenger, store: createMemoryStore(), fetchForecast });

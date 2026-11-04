@@ -36,7 +36,7 @@ test('setWebhook sends the URL, secret and the update types the bot uses', async
   assert.deepEqual(requests[0].body, {
     url: 'https://example.com/hook',
     secret_token: 'S',
-    allowed_updates: ['message', 'my_chat_member'],
+    allowed_updates: ['message', 'my_chat_member', 'callback_query'],
   });
 });
 
@@ -46,4 +46,29 @@ test('Telegram errors are thrown without revealing the token', async () => {
     createTelegramClient({ token: 'SECRET' }).getMe(),
     (err) => err.message === 'Telegram getMe failed: Unauthorized (401)',
   );
+});
+
+test('answerButton stops the spinner with a note', async () => {
+  const requests = stubFetch({ ok: true, result: true });
+  await createTelegramClient({ token: 'T' }).answerButton('abc', 'Thanks');
+  assert.equal(requests[0].url, 'https://api.telegram.org/botT/answerCallbackQuery');
+  assert.deepEqual(requests[0].body, { callback_query_id: 'abc', text: 'Thanks' });
+});
+
+test('setMessageKeyboard updates the buttons on a message', async () => {
+  const requests = stubFetch({ ok: true, result: {} });
+  const keyboard = { inline_keyboard: [] };
+  await createTelegramClient({ token: 'T' }).setMessageKeyboard('111', 5, keyboard);
+  assert.equal(requests[0].url, 'https://api.telegram.org/botT/editMessageReplyMarkup');
+  assert.deepEqual(requests[0].body, { chat_id: '111', message_id: 5, reply_markup: keyboard });
+});
+
+test('tapping the same button twice is not an error', async () => {
+  stubFetch({ ok: false, error_code: 400, description: 'Bad Request: message is not modified' });
+  await createTelegramClient({ token: 'T' }).setMessageKeyboard('111', 5, {});
+});
+
+test('other button update errors are still reported', async () => {
+  stubFetch({ ok: false, error_code: 400, description: 'Bad Request: message to edit not found' });
+  await assert.rejects(createTelegramClient({ token: 'T' }).setMessageKeyboard('111', 5, {}), /not found/);
 });

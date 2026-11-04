@@ -10,6 +10,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "logs": "wrangler tail",
+    "feedback": "wrangler d1 execute weatherbot --remote --file scripts/feedback.sql",
     "set-webhook": "node --env-file-if-exists=.env scripts/set-webhook.js",
     "simulate": "node scripts/simulate.js",
     "test": "node --test"

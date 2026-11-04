@@ -11,6 +11,9 @@ const TODAY_ICONS = '🚫-🚫-🚫-🚫';
 const TOMORROW_ICONS = '☔-🚫-🚫-🚫';
 const HELP = 'ℹ️ Help';
 
+// Reads the icons back out of a day card, as morning-afternoon-evening-night.
+const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
+
 // Today is dry, and tomorrow morning needs an umbrella.
 const forecast = (timezone = 'Asia/Tokyo') => {
   const size = 72;
@@ -20,7 +23,7 @@ const forecast = (timezone = 'Asia/Tokyo') => {
     timezone,
     hourly: {
       time: Array.from({ length: size }, (_, i) => `2026-11-0${4 + Math.floor(i / 24)}T00:00`),
-      temperature_2m: Array(size).fill(20),
+      temperature_2m: Array(size).fill(25),
       precipitation,
       precipitation_probability: Array(size).fill(0),
       weather_code: Array(size).fill(3),
@@ -33,12 +36,20 @@ const privateChat = { id: CHAT_ID, type: 'private' };
 
 function setup({ fetchForecast = async () => forecast(), store = createMemoryStore() } = {}) {
   const sent = [];
-  const messenger = { sendText: async (to, text, keyboard) => sent.push({ to, text, keyboard }) };
+  const buttonNotes = [];
+  const keyboardUpdates = [];
+  const messenger = {
+    sendText: async (to, text, keyboard) => ({ message_id: sent.push({ to, text, keyboard }) }),
+    answerButton: async (id, text) => buttonNotes.push({ id, text }),
+    setMessageKeyboard: async (to, messageId, keyboard) => keyboardUpdates.push({ to, messageId, keyboard }),
+  };
   const bot = createBot({ messenger, store, fetchForecast, log: { error() {} } });
   const send = (fields) => bot.handleUpdate({ update_id: 1, message: { chat: privateChat, ...fields } });
   const say = (text) => send({ text });
   const share = (location = TOKYO) => send({ location });
-  return { bot, sent, store, say, share, send };
+  const tap = (data, messageId) =>
+    bot.handleUpdate({ callback_query: { id: 'tap1', data, message: { message_id: messageId, chat: privateChat } } });
+  return { bot, sent, store, say, share, send, tap, buttonNotes, keyboardUpdates };
 }
 
 const firstButton = (keyboard) => keyboard.keyboard[0][0];
@@ -76,7 +87,8 @@ test('sharing a location saves it and replies with today, using those coordinate
   await share();
   assert.deepEqual(await store.getLocation(USER), SAVED_TOKYO);
   assert.deepEqual(calls, [[35.68, 139.76]]);
-  assert.ok(sent[0].text.includes(TODAY_ICONS));
+  assert.match(sent[0].text, /Today · Wed 4 Nov/);
+  assert.match(sent[0].text, /🚫  Night/);
   assert.equal(firstButton(sent[0].keyboard).text, 'Today');
 });
 
@@ -128,13 +140,93 @@ test('a location is not saved when the forecast check fails', async () => {
   assert.match(sent[0].text, /couldn't get the forecast/);
 });
 
-test('Today and Tomorrow reply with only the icons for that day', async () => {
+test('Today and Tomorrow reply with a dated card for that day', async () => {
   const { sent, say, share } = setup();
   await share();
   await say('Today');
   await say('Tomorrow');
-  assert.equal(sent[1].text, TODAY_ICONS);
-  assert.equal(sent[2].text, TOMORROW_ICONS);
+  assert.equal(sent[1].text, '*Today · Wed 4 Nov*\n\n🚫  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night');
+  assert.equal(sent[2].text, '*Tomorrow · Thu 5 Nov*\n\n☔  Morning\n🚫  Afternoon\n🚫  Evening\n🚫  Night');
+});
+
+const buttonTexts = (keyboard) => keyboard.inline_keyboard.flat().map((b) => b.text);
+
+test('Today and Tomorrow cards have like and dislike buttons', async () => {
+  const { sent, say, share } = setup();
+  await share();
+  await say('Today');
+  assert.deepEqual(buttonTexts(sent[1].keyboard), ['👍', '👎']);
+  assert.deepEqual(sent[1].keyboard.inline_keyboard.flat().map((b) => b.callback_data), ['like', 'dislike']);
+});
+
+test('requested cards are logged with no reaction yet', async () => {
+  const { store, say, share } = setup();
+  await share();
+  await say('Today');
+  await say('Tomorrow');
+  const logged = await store.getSuggestions(USER);
+  assert.deepEqual(logged.map((s) => s.source), ['today', 'tomorrow']);
+  assert.deepEqual(logged.map((s) => s.reaction), ['none', 'none']);
+  assert.deepEqual(logged.map((s) => s.reasons), [['requested'], ['requested']]);
+  assert.deepEqual(logged.map((s) => s.messageId), [2, 3]);
+  assert.deepEqual(logged.map((s) => s.forecastDate), ['2026-11-04', '2026-11-05']);
+  assert.equal(logged[1].icons, TOMORROW_ICONS);
+});
+
+test('the location message has no like buttons and is not logged', async () => {
+  const { sent, store, share } = setup();
+  await share();
+  assert.equal(sent[0].keyboard.inline_keyboard, undefined);
+  assert.deepEqual(await store.getSuggestions(USER), []);
+});
+
+test('tapping a button logs it, thanks the user and ticks that button', async () => {
+  const { store, say, share, tap, buttonNotes, keyboardUpdates } = setup();
+  await share();
+  await say('Today');
+  await tap('like', 2);
+  assert.equal((await store.getSuggestions(USER))[0].reaction, 'like');
+  assert.deepEqual(buttonNotes, [{ id: 'tap1', text: 'Thanks for the feedback!' }]);
+  assert.equal(keyboardUpdates[0].to, USER);
+  assert.equal(keyboardUpdates[0].messageId, 2);
+  assert.deepEqual(buttonTexts(keyboardUpdates[0].keyboard), ['✅ 👍', '👎']);
+});
+
+test('a user can change their mind', async () => {
+  const { store, say, share, tap, keyboardUpdates } = setup();
+  await share();
+  await say('Today');
+  await tap('like', 2);
+  await tap('dislike', 2);
+  assert.equal((await store.getSuggestions(USER))[0].reaction, 'dislike');
+  assert.deepEqual(buttonTexts(keyboardUpdates[1].keyboard), ['👍', '✅ 👎']);
+});
+
+test('an unknown button value is not logged, but the spinner still stops', async () => {
+  const { store, say, share, tap, buttonNotes, keyboardUpdates } = setup();
+  await share();
+  await say('Today');
+  await tap('constructor', 2);
+  assert.equal((await store.getSuggestions(USER))[0].reaction, 'none');
+  assert.equal(buttonNotes.length, 1);
+  assert.equal(keyboardUpdates.length, 0);
+});
+
+test('a failure to log still leaves the delivered card alone', async () => {
+  const store = createMemoryStore();
+  store.logSuggestion = async () => {
+    throw new Error('database down');
+  };
+  const { sent, say, share } = setup({ store });
+  await share();
+  await say('Today');
+  assert.equal(iconsIn(sent[1].text), TODAY_ICONS);
+});
+
+test('button taps from group chats are ignored', async () => {
+  const { bot, buttonNotes } = setup();
+  await bot.handleUpdate({ callback_query: { id: 'x', data: 'like', message: { message_id: 1, chat: { id: -5, type: 'group' } } } });
+  assert.equal(buttonNotes.length, 0);
 });
 
 test('Today and Tomorrow work when typed, regardless of case', async () => {
@@ -142,8 +234,8 @@ test('Today and Tomorrow work when typed, regardless of case', async () => {
   await share();
   await say(' tomorrow ');
   await say('TODAY');
-  assert.equal(sent[1].text, TOMORROW_ICONS);
-  assert.equal(sent[2].text, TODAY_ICONS);
+  assert.equal(iconsIn(sent[1].text), TOMORROW_ICONS);
+  assert.equal(iconsIn(sent[2].text), TODAY_ICONS);
 });
 
 test('Today and Tomorrow explain when the forecast fails', async () => {
@@ -172,13 +264,14 @@ test('Help explains the icons, timings, notifications and who to contact', async
   const { sent, say } = setup();
   await say(HELP);
   const { text } = sent[0];
-  for (const icon of ['☔', '🌦️', '🧥', '❄️', '☀️', '🚫']) assert.ok(text.includes(icon), `missing ${icon}`);
+  for (const icon of ['☔', '🌦️', '🍃', '🧥', '❄️', '☀️', '🚫']) assert.ok(text.includes(icon), `missing ${icon}`);
   for (const timing of ['06:00–12:00', '12:00–18:00', '18:00–24:00', '00:00–06:00']) {
     assert.ok(text.includes(timing), `missing ${timing}`);
   }
+  assert.match(text, /23°C or below/);
   assert.match(text, /15°C or below/);
   assert.match(text, /below 5°C/);
-  assert.match(text, /30°C or above/);
+  assert.match(text, /Sweaty hot, or sunny/);
   assert.match(text, /20:00 your local time/);
   assert.match(text, /Contact Shrawan/);
 });
@@ -250,7 +343,7 @@ test('users are saved under a text ID, though Telegram sends a number', async ()
   assert.equal(await store.getLocation(CHAT_ID), undefined);
   const { sent, say } = setup({ store });
   await say('today');
-  assert.equal(sent[0].text, TODAY_ICONS);
+  assert.equal(iconsIn(sent[0].text), TODAY_ICONS);
 });
 
 test('unknown update types are ignored', async () => {

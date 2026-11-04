@@ -1,4 +1,5 @@
-import { createBot, MAIN_KEYBOARD } from './bot.js';
+import { createBot } from './bot.js';
+import { reactionKeyboard } from './feedback.js';
 import { createNotifier } from './notifier.js';
 import { createD1Store } from './store.js';
 import { createTelegramClient, WEBHOOK_PATH } from './telegram.js';
@@ -46,6 +47,6 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(createNotifier({ ...dependencies(env), keyboard: MAIN_KEYBOARD }).checkAll());
+    ctx.waitUntil(createNotifier({ ...dependencies(env), keyboard: reactionKeyboard() }).checkAll());
   },
 };

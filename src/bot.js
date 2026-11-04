@@ -1,5 +1,6 @@
+import { buildSuggestion, isReaction, reactionKeyboard } from './feedback.js';
 import { NOTIFY_HOUR } from './notifier.js';
-import { COLD_C, dayOutlook, HOT_C, VERY_COLD_C } from './outlook.js';
+import { COLD_C, COOL_C, dayCard, VERY_COLD_C } from './outlook.js';
 import { getDay, isCoveredLocation } from './weather.js';
 
 const SHARE_LABEL = '📍 Share my location';
@@ -10,24 +11,32 @@ const NOT_COVERED = 'Sorry, I only cover Japan, Malaysia and India for now, and 
 const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters. Tap ${HELP_LABEL} to see what the icons mean.`;
 
 const HELP_TEXT = `*What the icons mean*
-☔ Take an umbrella
-🌦️ A little rain, umbrella optional
-🧥 Cold, ${COLD_C}°C or below
-❄️ Very cold, below ${VERY_COLD_C}°C
-☀️ Hot and sunny, ${HOT_C}°C or above
-🚫 Nothing needed
 
-*Timings*
-Icons go in this order, for example ☔-🌦️-🚫-🧥:
-1. Morning, 06:00–12:00
-2. Afternoon, 12:00–18:00
-3. Evening, 18:00–24:00
-4. Night, 00:00–06:00
+☔  Take an umbrella
+🌦️  A little rain, umbrella optional
+🍃  Mildly cold, ${COOL_C}°C or below
+🧥  Very cold, ${COLD_C}°C or below
+❄️  Freezing, below ${VERY_COLD_C}°C
+☀️  Sweaty hot, or sunny
+🚫  Nothing needed
 
-*Notifications*
-Around ${NOTIFY_HOUR}:00 your local time, I check tomorrow. I only message you if you need an umbrella, if the temperature is changing by 4°C or more compared with the past week, or if you need different clothes than in the past week.
+*Times of day*
+
+Morning  ·  06:00–12:00
+Afternoon  ·  12:00–18:00
+Evening  ·  18:00–24:00
+Night  ·  00:00–06:00
+
+*When I message you*
+
+Around ${NOTIFY_HOUR}:00 your local time, I check tomorrow. You'll only hear from me if:
+
+•  You need an umbrella
+•  It will be 4°C or more colder or warmer than today
+•  You need different clothes than in the past week
 
 *More details*
+
 Contact Shrawan.`;
 
 const locationButton = (text) => ({ text, request_location: true });
@@ -43,9 +52,12 @@ export const MAIN_KEYBOARD = {
   resize_keyboard: true,
 };
 
-const DAY_OFFSETS = { today: 0, tomorrow: 1 };
+const DAYS = {
+  today: { offset: 0, label: 'Today', source: 'today' },
+  tomorrow: { offset: 1, label: 'Tomorrow', source: 'tomorrow' },
+};
 
-const iconsFor = (forecast, dayOffset) => dayOutlook(getDay(forecast, dayOffset)).icons;
+const cardFor = (forecast, { offset, label }) => dayCard(getDay(forecast, offset), label);
 
 export function createBot({ messenger, store, fetchForecast, log = console }) {
   const askForLocation = (userId, intro) =>
@@ -58,7 +70,7 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     try {
       const forecast = await fetchForecast(lat, lon);
       if (isCoveredLocation(forecast)) {
-        text = `📍 Location saved. Here's today:\n\n${iconsFor(forecast, DAY_OFFSETS.today)}\n\n${NOTIFICATION_INTRO}`;
+        text = `📍 *Location saved*\n\n${cardFor(forecast, DAYS.today)}\n\n${NOTIFICATION_INTRO}`;
         await store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
       } else {
         text = NOT_COVERED;
@@ -70,16 +82,42 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
     await messenger.sendText(userId, text, await keyboardFor(userId));
   }
 
-  async function sendDay(userId, dayOffset) {
+  async function sendDay(userId, { offset, label, source }) {
     const location = await store.getLocation(userId);
-    let text;
+    let day;
     try {
-      text = iconsFor(await fetchForecast(location.lat, location.lon), dayOffset);
+      day = getDay(await fetchForecast(location.lat, location.lon), offset);
     } catch (err) {
       log.error('Forecast failed:', err.message);
-      text = FORECAST_ERROR;
+      await messenger.sendText(userId, FORECAST_ERROR, MAIN_KEYBOARD);
+      return;
     }
-    await messenger.sendText(userId, text, MAIN_KEYBOARD);
+
+    const message = await messenger.sendText(userId, dayCard(day, label), reactionKeyboard());
+    try {
+      await store.logSuggestion(
+        buildSuggestion({
+          userId,
+          messageId: message.message_id,
+          source,
+          day,
+          reasons: ['requested'],
+          timezone: location.timezone,
+          sentAt: new Date().toISOString(),
+        }),
+      );
+    } catch (err) {
+      // The card was delivered, so don't fail and make Telegram send the request again.
+      log.error('Could not log suggestion:', err.message);
+    }
+  }
+
+  async function handleReaction(userId, { id, data, message }) {
+    if (isReaction(data)) {
+      await store.recordReaction(userId, message.message_id, data, new Date().toISOString());
+    }
+    await messenger.answerButton(id, 'Thanks for the feedback!');
+    if (isReaction(data)) await messenger.setMessageKeyboard(userId, message.message_id, reactionKeyboard(data));
   }
 
   async function handleMessage(userId, message) {
@@ -115,8 +153,8 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
       return;
     }
 
-    if (Object.hasOwn(DAY_OFFSETS, text)) {
-      await sendDay(userId, DAY_OFFSETS[text]);
+    if (Object.hasOwn(DAYS, text)) {
+      await sendDay(userId, DAYS[text]);
       return;
     }
 
@@ -124,14 +162,15 @@ export function createBot({ messenger, store, fetchForecast, log = console }) {
   }
 
   return {
-    async handleUpdate({ message, my_chat_member: memberUpdate }) {
+    async handleUpdate({ message, my_chat_member: memberUpdate, callback_query: buttonTap }) {
       // Only private chats: a location shared in a group shouldn't drive anyone's forecast.
-      const chat = message?.chat ?? memberUpdate?.chat;
+      const chat = message?.chat ?? memberUpdate?.chat ?? buttonTap?.message?.chat;
       if (chat?.type !== 'private') return;
 
       // The database stores IDs as text, so use strings everywhere.
       const userId = String(chat.id);
       if (message) await handleMessage(userId, message);
+      else if (buttonTap) await handleReaction(userId, buttonTap);
       else if (memberUpdate.new_chat_member.status === 'kicked') await store.deleteUser(userId);
     },
   };

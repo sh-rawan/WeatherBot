@@ -7,6 +7,9 @@ export function createFakeD1() {
   const database = new DatabaseSync(':memory:');
   database.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8'));
   return {
+    async batch(statements) {
+      for (const statement of statements) await statement.run();
+    },
     prepare(sql) {
       const statement = (params) => ({
         bind: (...next) => statement(next),

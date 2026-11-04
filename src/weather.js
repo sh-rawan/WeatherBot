@@ -5,7 +5,7 @@ export async function fetchForecast(lat, lon) {
   const params = new URLSearchParams({
     latitude: lat,
     longitude: lon,
-    hourly: 'temperature_2m,precipitation,precipitation_probability,weather_code,wind_gusts_10m',
+    hourly: 'temperature_2m,apparent_temperature,precipitation,precipitation_probability,weather_code,wind_gusts_10m',
     timezone: 'auto',
     // One day more than we show: the last hour of a day is reported at 00:00 of the next.
     forecast_days: '3',
@@ -43,7 +43,7 @@ export const isCoveredLocation = (forecast) => COVERED_TIMEZONES.has(forecast.ti
  * shown an hour late.
  */
 export function getDay(forecast, dayOffset) {
-  const { time, temperature_2m, precipitation, precipitation_probability, weather_code, wind_gusts_10m } =
+  const { time, temperature_2m, apparent_temperature, precipitation, precipitation_probability, weather_code, wind_gusts_10m } =
     forecast.hourly;
   const start = ((forecast.pastDays ?? 0) + dayOffset) * 24;
   const slot = (instant, hour) => {
@@ -51,6 +51,7 @@ export function getDay(forecast, dayOffset) {
     return {
       hour,
       tempC: temperature_2m[instant],
+      feelsC: apparent_temperature?.[instant] ?? temperature_2m[instant],
       precipMm: precipitation[period] ?? 0,
       precipProb: precipitation_probability[period] ?? 0,
       code: weather_code[period],

@@ -6,11 +6,15 @@ import { WEBHOOK_PATH } from '../src/telegram.js';
 import { createFakeD1 } from './fake-d1.js';
 
 const SECRET = 'test-secret';
+
+// Reads the icons back out of a day card, as morning-afternoon-evening-night.
+const iconsIn = (text) => text.split('\n').slice(2).map((line) => line.split('  ')[0]).join('-');
 const realFetch = globalThis.fetch;
 const realDate = Date.now;
 
 let env;
 let sent;
+let calls;
 let telegramFails;
 let forecastFails;
 
@@ -23,7 +27,7 @@ function forecastResponse() {
     timezone: 'Asia/Tokyo',
     hourly: {
       time: Array.from({ length: size }, (_, i) => new Date(Date.UTC(2026, 9, 28, i)).toISOString().slice(0, 16)),
-      temperature_2m: Array(size).fill(20),
+      temperature_2m: Array(size).fill(25),
       precipitation,
       precipitation_probability: Array(size).fill(0),
       weather_code: Array(size).fill(3),
@@ -35,6 +39,7 @@ function forecastResponse() {
 beforeEach(() => {
   env = { DB: createFakeD1(), TELEGRAM_BOT_TOKEN: 'T', WEBHOOK_SECRET: SECRET };
   sent = [];
+  calls = [];
   telegramFails = false;
   forecastFails = false;
   globalThis.fetch = async (url, options) => {
@@ -43,8 +48,10 @@ beforeEach(() => {
       return Response.json(forecastResponse());
     }
     if (telegramFails) return Response.json({ ok: false, error_code: 500, description: 'down' });
-    sent.push(JSON.parse(options.body));
-    return Response.json({ ok: true, result: {} });
+    const method = String(url).split('/').pop();
+    calls.push(method);
+    if (method === 'sendMessage') sent.push(JSON.parse(options.body));
+    return Response.json({ ok: true, result: { message_id: sent.length } });
   };
 });
 
@@ -90,10 +97,39 @@ test('sharing a location through the webhook saves it in the database and replie
   });
 });
 
-test('Tomorrow replies with only the icons, using the saved location', async () => {
+test('Tomorrow replies with a day card, using the saved location', async () => {
   await post(message(LOCATION));
   await post(message({ text: 'Tomorrow' }));
-  assert.equal(sent[1].text, '☔-🚫-🚫-🚫');
+  assert.equal(iconsIn(sent[1].text), '☔-🚫-🚫-🚫');
+  assert.match(sent[1].text, /^\*Tomorrow · /);
+});
+
+test('a button tap through the webhook updates the logged card in the database', async () => {
+  await post(message(LOCATION));
+  await post(message({ text: 'Tomorrow' }));
+  const store = createD1Store(env.DB);
+  assert.equal((await store.getSuggestions('111'))[0].reaction, 'none');
+
+  const res = await post({
+    update_id: 2,
+    callback_query: { id: 'tap', data: 'dislike', message: { message_id: 2, chat: { id: 111, type: 'private' } } },
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await store.getSuggestions('111'))[0].reaction, 'dislike');
+  assert.deepEqual(calls.slice(-2), ['answerCallbackQuery', 'editMessageReplyMarkup']);
+});
+
+test('the evening card is sent with buttons and logged in the database', async () => {
+  const store = createD1Store(env.DB);
+  await store.setLocation('111', { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' });
+  Date.now = () => new Date('2026-11-04T11:30:00Z').getTime(); // 20:30 in Tokyo.
+  await runSchedule();
+  assert.deepEqual(sent[0].reply_markup.inline_keyboard.flat().map((b) => b.text), ['👍', '👎']);
+  const [logged] = await store.getSuggestions('111');
+  assert.equal(logged.source, 'evening');
+  assert.equal(logged.reaction, 'none');
+  assert.deepEqual(logged.reasons, ['umbrella']);
+  assert.equal(logged.messageId, 1);
 });
 
 test('a wrong or missing secret is rejected and does nothing', async () => {
@@ -138,7 +174,7 @@ test('the schedule sends the evening message once, and saves the checked date', 
 
   await runSchedule();
   await runSchedule();
-  assert.deepEqual(sent.map((m) => m.text), ['☔-🚫-🚫-🚫']);
+  assert.deepEqual(sent.map((m) => iconsIn(m.text)), ['☔-🚫-🚫-🚫']);
   assert.equal(sent[0].chat_id, '111');
   assert.equal((await store.getLocation('111')).lastCheckedDate, '2026-11-04');
 });
