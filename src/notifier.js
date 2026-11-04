@@ -113,7 +113,7 @@ export function createNotifier({ messenger, store, fetchForecast, now = Date.now
       let checked = 0;
       for (const [userId, user] of await store.getUsers()) {
         const { date, hour } = localTime(now(), user.timezone);
-        if (hour < NOTIFY_HOUR || user.lastCheckedDate === date) continue;
+        if (user.notificationsOffAt || hour < NOTIFY_HOUR || user.lastCheckedDate === date) continue;
         if (checked === MAX_USERS_PER_RUN) break;
         checked++;
         try {

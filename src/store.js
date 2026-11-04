@@ -1,8 +1,9 @@
-const toUser = ({ lat, lon, timezone, last_checked_date: lastCheckedDate }) => ({
+const toUser = ({ lat, lon, timezone, last_checked_date: lastCheckedDate, notifications_off_at: notificationsOffAt }) => ({
   lat,
   lon,
   timezone,
   ...(lastCheckedDate && { lastCheckedDate }),
+  ...(notificationsOffAt && { notificationsOffAt }),
 });
 
 const markCheckedStatement = (db, userId, date) =>
@@ -66,6 +67,10 @@ export function createD1Store(db) {
     async markChecked(userId, date) {
       await markCheckedStatement(db, userId, date).run();
     },
+    /** Pass the time they were turned off, or null to turn them back on. */
+    async setNotificationsOff(userId, at) {
+      await db.prepare('UPDATE users SET notifications_off_at = ? WHERE user_id = ?').bind(at, userId).run();
+    },
     async deleteUser(userId) {
       await db.prepare('DELETE FROM users WHERE user_id = ?').bind(userId).run();
     },
@@ -99,10 +104,16 @@ export function createMemoryStore() {
   return {
     getLocation: async (userId) => users.get(userId),
     setLocation: async (userId, location) => {
-      users.set(userId, location);
+      const notificationsOffAt = users.get(userId)?.notificationsOffAt;
+      users.set(userId, { ...location, ...(notificationsOffAt && { notificationsOffAt }) });
     },
     getUsers: async () => [...users],
     markChecked: async (userId, date) => markChecked(userId, date),
+    setNotificationsOff: async (userId, at) => {
+      if (!users.has(userId)) return;
+      const { notificationsOffAt, ...user } = users.get(userId);
+      users.set(userId, { ...user, ...(at && { notificationsOffAt: at }) });
+    },
     deleteUser: async (userId) => {
       users.delete(userId);
     },

@@ -38,7 +38,7 @@ A message is sent when one of these is true:
 
 Weather at night, and ☀️ for sunshine alone, shows an icon but never causes a message by itself. You can change these values at the top of `src/outlook.js` and `src/notifier.js`.
 
-Tapping **Today** or **Tomorrow** replies with the same card at any time, and **ℹ️ Help** explains the icons and timings.
+Tapping **🔕 Stop notifications** turns the evening check off for that user, and **🔔 Turn on notifications** turns it back on. **Today** and **Tomorrow** keep working either way. Tapping **Today** or **Tomorrow** replies with the same card at any time, and **ℹ️ Help** explains the icons and timings.
 
 The check runs every 5 minutes and handles up to 3 users each time, so anyone not reached at 20:00 is picked up by a later run before their midnight.
 

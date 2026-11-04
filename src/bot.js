@@ -6,9 +6,14 @@ import { getDay, isCoveredLocation } from './weather.js';
 const SHARE_LABEL = '📍 Share my location';
 const UPDATE_LABEL = '📍 Update location';
 const HELP_LABEL = 'ℹ️ Help';
+const STOP_LABEL = '🔕 Stop notifications';
+const RESUME_LABEL = '🔔 Turn on notifications';
 const FORECAST_ERROR = "Sorry, I couldn't get the forecast just now. Please try again in a minute.";
 const NOT_COVERED = 'Sorry, I only cover Japan, Malaysia and India for now, and that location looks like it is somewhere else.';
 const NOTIFICATION_INTRO = `🔔 Every evening around ${NOTIFY_HOUR}:00 I'll check tomorrow, and message you only when it matters. Tap ${HELP_LABEL} to see what the icons mean.`;
+const NOTIFICATIONS_OFF_NOTE = `🔕 Your evening notifications are off. Tap ${RESUME_LABEL} to turn them back on.`;
+const STOPPED_TEXT = `🔕 Evening notifications are off. Today and Tomorrow still work whenever you tap them.`;
+const RESUMED_TEXT = `🔔 Evening notifications are on. I'll message you around ${NOTIFY_HOUR}:00 when it matters.`;
 
 const HELP_TEXT = `*What the icons mean*
 
@@ -35,6 +40,8 @@ Around ${NOTIFY_HOUR}:00 your local time, I check tomorrow. You'll only hear fro
 •  It will be 4°C or more colder or warmer than today
 •  You need different clothes than in the past week
 
+Tap 🔕 to stop these messages, and 🔔 to turn them back on.
+
 *More details*
 
 Contact Shrawan.`;
@@ -47,10 +54,15 @@ const ASK_LOCATION_KEYBOARD = {
   resize_keyboard: true,
 };
 
-export const MAIN_KEYBOARD = {
-  keyboard: [[{ text: 'Today' }, { text: 'Tomorrow' }], [locationButton(UPDATE_LABEL)], HELP_ROW],
+const mainKeyboard = (user) => ({
+  keyboard: [
+    [{ text: 'Today' }, { text: 'Tomorrow' }],
+    [locationButton(UPDATE_LABEL)],
+    [{ text: user.notificationsOffAt ? RESUME_LABEL : STOP_LABEL }],
+    HELP_ROW,
+  ],
   resize_keyboard: true,
-};
+});
 
 const DAYS = {
   today: { offset: 0, source: 'today', reasons: ['requested'] },
@@ -66,15 +78,20 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
   const askForLocation = (userId, intro) =>
     messenger.sendText(userId, `${intro} Tap the button below to share your location.`, ASK_LOCATION_KEYBOARD);
 
-  const keyboardFor = async (userId) => ((await store.getLocation(userId)) ? MAIN_KEYBOARD : ASK_LOCATION_KEYBOARD);
+  const keyboardFor = async (userId) => {
+    const user = await store.getLocation(userId);
+    return user ? mainKeyboard(user) : ASK_LOCATION_KEYBOARD;
+  };
 
   async function handleLocation(userId, { latitude: lat, longitude: lon }) {
     let text;
     try {
       const forecast = await fetchForecast(lat, lon);
       if (isCoveredLocation(forecast)) {
-        text = `📍 *Location saved*\n\n${cardFor(forecast, DAYS.today)}\n\n${NOTIFICATION_INTRO}`;
         await store.setLocation(userId, { lat, lon, timezone: forecast.timezone });
+        const { notificationsOffAt } = await store.getLocation(userId);
+        const note = notificationsOffAt ? NOTIFICATIONS_OFF_NOTE : NOTIFICATION_INTRO;
+        text = `📍 *Location saved*\n\n${cardFor(forecast, DAYS.today)}\n\n${note}`;
       } else {
         text = NOT_COVERED;
       }
@@ -92,7 +109,7 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
       day = getDay(await fetchForecast(location.lat, location.lon), offset);
     } catch (err) {
       log.error('Forecast failed:', err.message);
-      await messenger.sendText(userId, FORECAST_ERROR, MAIN_KEYBOARD);
+      await messenger.sendText(userId, FORECAST_ERROR, mainKeyboard(location));
       return;
     }
 
@@ -151,12 +168,23 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
       return;
     }
 
-    if (!(await store.getLocation(userId))) {
+    const user = await store.getLocation(userId);
+    if (!user) {
       const intro =
         rawText === '/start'
           ? "Hi! I'll tell you how your day looks, starting with rain. ☔ I cover Japan, Malaysia and India."
           : 'I need your location before I can check the weather.';
       await askForLocation(userId, intro);
+      return;
+    }
+
+    if (rawText === STOP_LABEL || rawText === RESUME_LABEL) {
+      const turnOff = rawText === STOP_LABEL;
+      // Tapping an old button twice keeps the original time they were turned off.
+      if (turnOff !== Boolean(user.notificationsOffAt)) {
+        await store.setNotificationsOff(userId, turnOff ? new Date().toISOString() : null);
+      }
+      await messenger.sendText(userId, turnOff ? STOPPED_TEXT : RESUMED_TEXT, await keyboardFor(userId));
       return;
     }
 
@@ -170,7 +198,7 @@ export function createBot({ messenger, store, fetchForecast, adminId, log = cons
       return;
     }
 
-    await messenger.sendText(userId, 'Choose Today or Tomorrow to see how the day looks.', MAIN_KEYBOARD);
+    await messenger.sendText(userId, 'Choose Today or Tomorrow to see how the day looks.', mainKeyboard(user));
   }
 
   return {

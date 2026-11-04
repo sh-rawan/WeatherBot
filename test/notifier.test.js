@@ -94,6 +94,37 @@ test('a day with no message logs no card, but is still marked as checked', async
   assert.equal((await store.getLocation('u1')).lastCheckedDate, '2026-11-04');
 });
 
+test('a user with notifications off gets nothing, and is not checked', async () => {
+  let calls = 0;
+  const { notifier, sent, store } = setup({
+    fetchForecast: async () => {
+      calls++;
+      return forecast();
+    },
+  });
+  await store.setNotificationsOff('u1', '2026-11-04T01:00:00.000Z');
+  await notifier.checkAll();
+  assert.equal(sent.length, 0);
+  assert.equal(calls, 0);
+  assert.equal((await store.getLocation('u1')).lastCheckedDate, undefined);
+});
+
+test('users with notifications off do not use up a run', async () => {
+  const { notifier, sent, store } = setup({ users: ['a', 'b', 'c', 'd'] });
+  for (const id of ['a', 'b', 'c']) await store.setNotificationsOff(id, '2026-11-04T01:00:00.000Z');
+  await notifier.checkAll();
+  assert.deepEqual(sent.map((m) => m.to), ['d']);
+});
+
+test('turning notifications back on before midnight still gets that evening checked', async () => {
+  const { notifier, sent, store } = setup();
+  await store.setNotificationsOff('u1', '2026-11-04T01:00:00.000Z');
+  await notifier.checkAll();
+  await store.setNotificationsOff('u1', null);
+  await notifier.checkAll();
+  assert.equal(sent.length, 1);
+});
+
 test('light rain alone sends nothing', async () => {
   const { notifier, sent } = setup({ fetchForecast: async () => forecast({ lightRain: true }) });
   await notifier.checkAll();

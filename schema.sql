@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS users (
   lat REAL NOT NULL,
   lon REAL NOT NULL,
   timezone TEXT NOT NULL,
-  last_checked_date TEXT
+  last_checked_date TEXT,
+  notifications_off_at TEXT         -- UTC. Empty means evening notifications are on.
 );
 
 -- One row for every forecast card sent. Reaction stays 'none' unless the user taps a button.

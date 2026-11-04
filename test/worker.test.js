@@ -156,6 +156,20 @@ test('the test message route reports a failure when no admin is set', async () =
   assert.equal(sent.length, 0);
 });
 
+test('stopping notifications through the webhook stops the evening card', async () => {
+  await post(message(LOCATION));
+  await post(message({ text: '🔕 Stop notifications' }));
+  const before = sent.length;
+  Date.now = () => new Date('2026-11-04T11:30:00Z').getTime(); // 20:30 in Tokyo.
+  await runSchedule();
+  assert.equal(sent.length, before);
+  assert.ok((await createD1Store(env.DB).getLocation('111')).notificationsOffAt);
+
+  await post(message({ text: '🔔 Turn on notifications' }));
+  await runSchedule();
+  assert.equal(sent.length, before + 2);
+});
+
 test('a wrong or missing secret is rejected and does nothing', async () => {
   assert.equal((await post(message(LOCATION), { secret: 'wrong-secret' })).status, 403);
   assert.equal((await post(message(LOCATION), { secret: 'wrong' })).status, 403);

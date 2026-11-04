@@ -61,6 +61,24 @@ for (const [name, createStore] of [
     assert.deepEqual(await store.getUsers(), []);
   });
 
+  test(`${name} store: notifications can be turned off and back on`, async () => {
+    const store = createStore();
+    await store.setLocation('a', TOKYO);
+    await store.setNotificationsOff('a', '2026-11-05T01:00:00.000Z');
+    assert.deepEqual(await store.getLocation('a'), { ...TOKYO, notificationsOffAt: '2026-11-05T01:00:00.000Z' });
+    assert.equal((await store.getUsers())[0][1].notificationsOffAt, '2026-11-05T01:00:00.000Z');
+    await store.setNotificationsOff('a', null);
+    assert.deepEqual(await store.getLocation('a'), TOKYO);
+  });
+
+  test(`${name} store: moving location keeps notifications off`, async () => {
+    const store = createStore();
+    await store.setLocation('a', TOKYO);
+    await store.setNotificationsOff('a', '2026-11-05T01:00:00.000Z');
+    await store.setLocation('a', DELHI);
+    assert.deepEqual(await store.getLocation('a'), { ...DELHI, notificationsOffAt: '2026-11-05T01:00:00.000Z' });
+  });
+
   test(`${name} store: a card with no reaction is logged as none`, async () => {
     const store = createStore();
     await store.logSuggestion(SUGGESTION);

@@ -10,6 +10,8 @@ const SAVED_TOKYO = { lat: 35.68, lon: 139.76, timezone: 'Asia/Tokyo' };
 const TODAY_ICONS = '🚫-🚫-🚫-🚫';
 const TOMORROW_ICONS = '☔-🚫-🚫-🚫';
 const HELP = 'ℹ️ Help';
+const STOP = '🔕 Stop notifications';
+const RESUME = '🔔 Turn on notifications';
 
 // Reads the weather tiles of a card, as morning-afternoon-evening-night.
 const iconsIn = (keyboard) => keyboard.inline_keyboard[1].map((tile) => tile.text).join('-');
@@ -372,6 +374,81 @@ test('sendTestCard only messages the admin, even with other users saved', async 
 test('sendTestCard fails clearly with no admin or no saved location', async () => {
   await assert.rejects(setup().bot.sendTestCard(), /No admin is set/);
   await assert.rejects(setup({ adminId: 'admin' }).bot.sendTestCard(), /no saved location/);
+});
+
+const allButtons = (keyboard) => keyboard.keyboard.flat().map((button) => button.text);
+
+test('the main menu has a stop button, and the first menu does not', async () => {
+  const { sent, say, share } = setup();
+  await say('/start');
+  assert.ok(!allButtons(sent[0].keyboard).includes(STOP));
+  await share();
+  assert.ok(allButtons(sent[1].keyboard).includes(STOP));
+  assert.deepEqual(lastRow(sent[1].keyboard), [HELP]);
+});
+
+test('tapping stop turns notifications off, confirms it, and offers to turn them on', async () => {
+  const { sent, store, say, share } = setup();
+  await share();
+  await say(STOP);
+  assert.match((await store.getLocation(USER)).notificationsOffAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(sent[1].text, /notifications are off/);
+  assert.ok(allButtons(sent[1].keyboard).includes(RESUME));
+  assert.ok(!allButtons(sent[1].keyboard).includes(STOP));
+});
+
+test('tapping turn on brings notifications back and restores the stop button', async () => {
+  const { sent, store, say, share } = setup();
+  await share();
+  await say(STOP);
+  await say(RESUME);
+  assert.equal((await store.getLocation(USER)).notificationsOffAt, undefined);
+  assert.match(sent[2].text, /notifications are on/);
+  assert.ok(allButtons(sent[2].keyboard).includes(STOP));
+});
+
+test('tapping stop twice keeps the original time', async () => {
+  const { store, say, share } = setup();
+  await share();
+  await say(STOP);
+  const first = (await store.getLocation(USER)).notificationsOffAt;
+  await store.setNotificationsOff(USER, '2020-01-01T00:00:00.000Z');
+  await say(STOP);
+  assert.equal((await store.getLocation(USER)).notificationsOffAt, '2020-01-01T00:00:00.000Z');
+  assert.ok(first);
+});
+
+test('Today, Tomorrow and the menu still work with notifications off', async () => {
+  const { sent, say, share } = setup();
+  await share();
+  await say(STOP);
+  await say('Tomorrow');
+  assert.equal(iconsIn(sent[2].keyboard), TOMORROW_ICONS);
+  await say('hello');
+  assert.ok(allButtons(sent[3].keyboard).includes(RESUME));
+});
+
+test('moving location with notifications off keeps them off and says so', async () => {
+  const { sent, store, say, share } = setup();
+  await share();
+  await say(STOP);
+  await share();
+  assert.ok((await store.getLocation(USER)).notificationsOffAt);
+  assert.match(sent[2].text, /notifications are off/);
+  assert.doesNotMatch(sent[2].text, /Every evening/);
+  assert.ok(allButtons(sent[2].keyboard).includes(RESUME));
+});
+
+test('tapping stop before sharing a location asks for one', async () => {
+  const { sent, say } = setup();
+  await say(STOP);
+  assert.match(sent[0].text, /need your location/);
+});
+
+test('Help explains how to stop notifications', async () => {
+  const { sent, say } = setup();
+  await say(HELP);
+  assert.match(sent[0].text, /Tap 🔕 to stop/);
 });
 
 test('inherited object keys are not treated as commands', async () => {
